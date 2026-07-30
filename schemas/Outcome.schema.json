@@ -1,0 +1,63 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "csat": {
+      "anyOf": [
+        {
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Csat"
+    },
+    "escalated": {
+      "title": "Escalated",
+      "type": "boolean"
+    },
+    "human_minutes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Human Minutes",
+      "type": "integer"
+    },
+    "model_cost_usd": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,8}|(?=[\\d.]{1,15}0*$)\\d{0,8}\\.\\d{0,6}0*$)",
+          "type": "string"
+        }
+      ],
+      "default": "0",
+      "title": "Model Cost Usd"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "resolved": {
+      "title": "Resolved",
+      "type": "boolean"
+    },
+    "ticket_id": {
+      "title": "Ticket Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticket_id",
+    "resolved",
+    "escalated"
+  ],
+  "title": "Outcome",
+  "type": "object"
+}

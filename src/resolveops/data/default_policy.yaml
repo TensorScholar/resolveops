@@ -1,0 +1,10 @@
+minimum_confidence: 0.65
+minimum_citations: 1
+maximum_article_age_days: 180
+maximum_refund: "250.00"
+auto_refund_limit: "0.00"
+action_requires_approval: true
+allowed_actions:
+  - refund
+  - plan_change
+  - cancellation

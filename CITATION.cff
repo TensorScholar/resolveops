@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use ResolveOps, cite this repository."
+title: "ResolveOps"
+version: 0.1.0rc1
+authors:
+  - family-names: Atashi
+    given-names: Mohammad
+license: Apache-2.0

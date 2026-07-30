@@ -1,0 +1,10 @@
+[
+  {
+    "id": "kb_refund",
+    "title": "Refund policy",
+    "body": "Refunds up to $250 may be considered within 30 days. A human reviewer must approve any refund action.",
+    "source_uri": "kb://billing/refunds",
+    "owner": "support-operations",
+    "approved": true
+  }
+]

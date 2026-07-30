@@ -1,0 +1,9 @@
+include README.md LICENSE NOTICE CHANGELOG.md SECURITY.md THREAT_MODEL.md
+include CONTRIBUTING.md SUPPORT.md CITATION.cff PROJECT_STATUS.md ROADMAP.md
+include GOVERNANCE.md PUBLISHING.md CODE_OF_CONDUCT.md
+recursive-include docs *
+recursive-include schemas *.json
+recursive-include scripts *.py
+recursive-include examples *
+recursive-include tests *.py
+recursive-include src/resolveops/data *

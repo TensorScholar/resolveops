@@ -1,0 +1,5 @@
+{
+  "customer_id": "cust_demo",
+  "message": "I was charged twice. Please refund $49.00.",
+  "channel": "web"
+}

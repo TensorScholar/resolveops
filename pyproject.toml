@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "resolveops"
+version = "0.1.0rc1"
+description = "Evidence-grounded customer support operations with approval-gated actions and measurable outcomes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{name = "Mohammad Atashi"}]
+keywords = ["ai-agents", "customer-support", "llm", "evaluation", "automation"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "pydantic>=2.10,<3",
+  "PyYAML>=6,<7",
+  "typer>=0.16,<1",
+  "rich>=13,<15",
+]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
+dev = [
+  "coverage>=7.6,<8",
+  "httpx>=0.27,<1",
+  "mypy>=1.14,<2",
+  "pip-audit>=2.8,<3",
+  "pytest>=8.3,<10",
+  "pytest-cov>=6,<8",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+resolveops = "resolveops.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/TensorScholar/resolveops"
+Issues = "https://github.com/TensorScholar/resolveops/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+resolveops = ["py.typed", "data/*.yaml", "data/*.json", "web/static/*"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers --disable-warnings"
+testpaths = ["tests"]
+markers = [
+  "integration: integration tests",
+  "security: adversarial and safety tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["resolveops"]
+omit = ["src/resolveops/__main__.py", "src/resolveops/cli.py", "src/resolveops/web/app.py"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "S"]
+ignore = ["S101"]
+per-file-ignores = {"tests/**/*.py" = ["S101", "S105", "S106"], "scripts/**/*.py" = ["S603", "S607"]}
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["resolveops"]
+mypy_path = "src"
+warn_unused_configs = true

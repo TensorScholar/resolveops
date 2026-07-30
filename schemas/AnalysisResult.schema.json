@@ -1,0 +1,202 @@
+{
+  "$defs": {
+    "ActionKind": {
+      "enum": [
+        "refund",
+        "plan_change",
+        "cancellation"
+      ],
+      "title": "ActionKind",
+      "type": "string"
+    },
+    "ActionProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,10}|(?=[\\d.]{1,13}0*$)\\d{0,10}\\.\\d{0,2}0*$)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActionKind"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "resource_id": {
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "target_plan": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Plan"
+        }
+      },
+      "required": [
+        "kind",
+        "resource_id",
+        "reason"
+      ],
+      "title": "ActionProposal",
+      "type": "object"
+    },
+    "Citation": {
+      "additionalProperties": false,
+      "properties": {
+        "article_id": {
+          "title": "Article Id",
+          "type": "string"
+        },
+        "excerpt": {
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        },
+        "source_uri": {
+          "title": "Source Uri",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "article_id",
+        "title",
+        "source_uri",
+        "excerpt",
+        "score",
+        "updated_at"
+      ],
+      "title": "Citation",
+      "type": "object"
+    },
+    "Disposition": {
+      "enum": [
+        "respond",
+        "review_required",
+        "escalate",
+        "deny"
+      ],
+      "title": "Disposition",
+      "type": "string"
+    },
+    "IntentKind": {
+      "enum": [
+        "information",
+        "refund",
+        "plan_change",
+        "cancellation",
+        "account_access",
+        "unknown"
+      ],
+      "title": "IntentKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "citations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Citation"
+      },
+      "title": "Citations",
+      "type": "array"
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "disposition": {
+      "$ref": "#/$defs/Disposition"
+    },
+    "disposition_reasons": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Disposition Reasons",
+      "type": "array"
+    },
+    "draft_reply": {
+      "title": "Draft Reply",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "intent": {
+      "$ref": "#/$defs/IntentKind"
+    },
+    "proposed_action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionProposal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "ticket_id": {
+      "title": "Ticket Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticket_id",
+    "intent",
+    "summary",
+    "draft_reply",
+    "confidence",
+    "disposition"
+  ],
+  "title": "AnalysisResult",
+  "type": "object"
+}

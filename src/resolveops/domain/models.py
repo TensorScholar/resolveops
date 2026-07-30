@@ -1,0 +1,194 @@
+"""Strict domain models."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from decimal import Decimal
+from enum import StrEnum
+from typing import Annotated
+from uuid import uuid4
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+StrictMoney = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=12, decimal_places=2)]
+StrictCost = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=14, decimal_places=6)]
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, validate_default=True)
+
+
+class Channel(StrEnum):
+    EMAIL = "email"
+    CHAT = "chat"
+    WEB = "web"
+
+
+class IntentKind(StrEnum):
+    INFORMATION = "information"
+    REFUND = "refund"
+    PLAN_CHANGE = "plan_change"
+    CANCELLATION = "cancellation"
+    ACCOUNT_ACCESS = "account_access"
+    UNKNOWN = "unknown"
+
+
+class Disposition(StrEnum):
+    RESPOND = "respond"
+    REVIEW_REQUIRED = "review_required"
+    ESCALATE = "escalate"
+    DENY = "deny"
+
+
+class ActionKind(StrEnum):
+    REFUND = "refund"
+    PLAN_CHANGE = "plan_change"
+    CANCELLATION = "cancellation"
+
+
+class ReviewState(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class Ticket(StrictModel):
+    id: str = Field(default_factory=lambda: f"tkt_{uuid4().hex}")
+    customer_id: str
+    message: str = Field(min_length=1, max_length=20_000)
+    channel: Channel = Channel.WEB
+    received_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class CustomerProfile(StrictModel):
+    id: str
+    plan: str = "free"
+    lifetime_value: StrictMoney = Decimal("0")
+    account_age_days: int = Field(default=0, ge=0)
+    refund_count_90d: int = Field(default=0, ge=0)
+    risk_flags: tuple[str, ...] = ()
+
+
+class KnowledgeArticle(StrictModel):
+    id: str
+    title: str
+    body: str = Field(min_length=1)
+    source_uri: str
+    owner: str
+    approved: bool = True
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+    expires_at: AwareDatetime | None = None
+
+    @property
+    def is_current(self) -> bool:
+        return self.approved and (self.expires_at is None or self.expires_at > utc_now())
+
+
+class Citation(StrictModel):
+    article_id: str
+    title: str
+    source_uri: str
+    excerpt: str
+    score: float = Field(ge=0, le=1)
+    updated_at: AwareDatetime
+
+
+class ActionProposal(StrictModel):
+    kind: ActionKind
+    resource_id: str
+    amount: StrictMoney | None = None
+    target_plan: str | None = None
+    reason: str
+
+
+class AnalysisResult(StrictModel):
+    id: str = Field(default_factory=lambda: f"ana_{uuid4().hex}")
+    ticket_id: str
+    intent: IntentKind
+    summary: str
+    draft_reply: str
+    citations: tuple[Citation, ...] = ()
+    confidence: float = Field(ge=0, le=1)
+    disposition: Disposition
+    disposition_reasons: tuple[str, ...] = ()
+    proposed_action: ActionProposal | None = None
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class Approval(StrictModel):
+    id: str = Field(default_factory=lambda: f"apr_{uuid4().hex}")
+    analysis_id: str
+    reviewer: str
+    state: ReviewState
+    note: str = ""
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ActionExecution(StrictModel):
+    id: str = Field(default_factory=lambda: f"exe_{uuid4().hex}")
+    analysis_id: str
+    approval_id: str
+    action: ActionProposal
+    success: bool
+    external_reference: str | None = None
+    message: str
+    executed_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class Outcome(StrictModel):
+    ticket_id: str
+    resolved: bool
+    escalated: bool
+    human_minutes: int = Field(default=0, ge=0)
+    csat: int | None = Field(default=None, ge=1, le=5)
+    model_cost_usd: StrictCost = Decimal("0")
+    recorded_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class PolicySettings(StrictModel):
+    minimum_confidence: float = Field(default=0.65, ge=0, le=1)
+    minimum_citations: int = Field(default=1, ge=0)
+    maximum_article_age_days: int = Field(default=180, ge=1)
+    maximum_refund: StrictMoney = Decimal("250")
+    auto_refund_limit: StrictMoney = Decimal("0")
+    action_requires_approval: bool = True
+    allowed_actions: frozenset[ActionKind] = frozenset(
+        {ActionKind.REFUND, ActionKind.PLAN_CHANGE, ActionKind.CANCELLATION}
+    )
+
+
+class PolicyDecision(StrictModel):
+    disposition: Disposition
+    reasons: tuple[str, ...]
+    action_allowed: bool
+
+
+class AuditEvent(StrictModel):
+    sequence: int
+    event_type: str
+    entity_id: str
+    payload: dict[str, object]
+    occurred_at: AwareDatetime = Field(default_factory=utc_now)
+    previous_hash: str
+    event_hash: str
+
+
+class EvaluationCase(StrictModel):
+    id: str
+    ticket: Ticket
+    customer: CustomerProfile
+    expected_intent: IntentKind
+    expected_disposition: Disposition | None = None
+    expected_article_ids: frozenset[str] = frozenset()
+
+
+class EvaluationSummary(StrictModel):
+    cases: int
+    intent_accuracy: float
+    disposition_accuracy: float | None
+    citation_recall: float
+    unsafe_action_rate: float

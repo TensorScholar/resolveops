@@ -1,0 +1,53 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "account_age_days": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Account Age Days",
+      "type": "integer"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "lifetime_value": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,10}|(?=[\\d.]{1,13}0*$)\\d{0,10}\\.\\d{0,2}0*$)",
+          "type": "string"
+        }
+      ],
+      "default": "0",
+      "title": "Lifetime Value"
+    },
+    "plan": {
+      "default": "free",
+      "title": "Plan",
+      "type": "string"
+    },
+    "refund_count_90d": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Refund Count 90D",
+      "type": "integer"
+    },
+    "risk_flags": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Risk Flags",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "CustomerProfile",
+  "type": "object"
+}

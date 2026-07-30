@@ -1,0 +1,8 @@
+{
+  "id": "cust_demo",
+  "plan": "pro",
+  "lifetime_value": "1800.00",
+  "account_age_days": 420,
+  "refund_count_90d": 0,
+  "risk_flags": []
+}
