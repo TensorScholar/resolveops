@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 
 import pytest
 
@@ -40,9 +40,7 @@ def test_concurrent_sqlite_audit_appends_are_serialized(tmp_path) -> None:
     with ThreadPoolExecutor(max_workers=8) as executor:
         list(
             executor.map(
-                lambda number: service._audit(
-                    "test.concurrent", str(number), {"number": number}
-                ),
+                lambda number: service._audit("test.concurrent", str(number), {"number": number}),
                 range(40),
             )
         )
@@ -77,9 +75,7 @@ def test_malformed_persisted_json_fails_closed(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "corrupt.db")
     store.put_customer(CustomerProfile(id="c"))
     with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute(
-            "UPDATE objects SET payload='not-json' WHERE kind='customer' AND id='c'"
-        )
+        connection.execute("UPDATE objects SET payload='not-json' WHERE kind='customer' AND id='c'")
 
     with pytest.raises(IntegrityError, match="invalid persisted customer payload"):
         store.get_customer("c")

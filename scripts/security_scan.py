@@ -9,9 +9,13 @@ for path in Path("src").rglob("*.py"):
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
                 violations.append(f"{path}:{node.lineno}: forbidden {node.func.id}")
-            if isinstance(node.func, ast.Attribute) and node.func.attr in {"loads", "load"}:
-                if isinstance(node.func.value, ast.Name) and node.func.value.id == "pickle":
-                    violations.append(f"{path}:{node.lineno}: pickle deserialization")
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"loads", "load"}
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "pickle"
+            ):
+                violations.append(f"{path}:{node.lineno}: pickle deserialization")
             for keyword in node.keywords:
                 if (
                     keyword.arg == "shell"

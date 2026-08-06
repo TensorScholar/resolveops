@@ -39,7 +39,10 @@ def test_cancel_action() -> None:
 
 
 def test_no_action_for_information() -> None:
-    assert propose_action(
-        Ticket(customer_id="c", message="what"),
-        IntentKind.INFORMATION,
-    ) is None
+    assert (
+        propose_action(
+            Ticket(customer_id="c", message="what"),
+            IntentKind.INFORMATION,
+        )
+        is None
+    )

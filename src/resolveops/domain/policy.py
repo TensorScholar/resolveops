@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
 from resolveops.domain.models import (
     ActionKind,
     ActionProposal,

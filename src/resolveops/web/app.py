@@ -82,7 +82,7 @@ def create_app(database: str | Path = "resolveops.db") -> object:
         return {"status": "recorded"}
 
     @app.get("/metrics")
-    def metrics() -> dict[str, object]:
+    def metrics() -> dict[str, float | int | str]:
         return service.metrics()
 
     return app

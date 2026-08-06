@@ -41,17 +41,13 @@ def test_reject_does_not_execute(service) -> None:
 
 
 def test_cannot_review_information_response(service) -> None:
-    analysis = service.analyze(
-        Ticket(customer_id="cust_1", message="What is the refund policy?")
-    )
+    analysis = service.analyze(Ticket(customer_id="cust_1", message="What is the refund policy?"))
     with pytest.raises(InvalidTransitionError):
         service.review(analysis.id, reviewer="manager@example.com", approve=True)
 
 
 def test_denied_refund_cannot_be_approved(service) -> None:
-    analysis = service.analyze(
-        Ticket(customer_id="cust_1", message="Refund $999")
-    )
+    analysis = service.analyze(Ticket(customer_id="cust_1", message="Refund $999"))
     assert analysis.disposition is Disposition.DENY
     with pytest.raises(PolicyDeniedError):
         service.review(analysis.id, reviewer="manager@example.com", approve=True)
