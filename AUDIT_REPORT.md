@@ -100,6 +100,9 @@ The canonical branch makes these material changes:
 | Direct runtime dependency constraints in effective environment | PASS | Pydantic, PyYAML, Typer, Rich |
 | sdist build | PASS | `resolveops-0.1.0rc2.tar.gz` |
 | wheel build | PASS | `resolveops-0.1.0rc2-py3-none-any.whl` |
+| Wheel byte-for-byte reproducibility across two clean exports | PASS | identical SHA-256 |
+| sdist member names and file contents across two clean exports | PASS | identical member-content map |
+| sdist byte-for-byte reproducibility | FAIL | generated tar member timestamps differ |
 | Distribution path safety and metadata inspection | PASS | release validation logs |
 | Fresh-venv wheel installation with dependency resolution disabled | PASS | packaging smoke; dependencies inherited from audited environment |
 | Git object integrity after canonical commits | PASS | final `git fsck --full --strict` |
