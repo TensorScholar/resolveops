@@ -6,6 +6,7 @@ import math
 import re
 from datetime import UTC, datetime
 
+from resolveops.domain.audit import object_digest
 from resolveops.domain.models import Citation, KnowledgeArticle
 
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9_-]+", re.IGNORECASE)
@@ -35,6 +36,8 @@ def retrieve(
     for article in articles:
         if not article.approved:
             continue
+        if article.updated_at > current_time:
+            continue
         if article.expires_at is not None and article.expires_at <= current_time:
             continue
         article_tokens = tokenize(f"{article.title} {article.body}")
@@ -56,6 +59,7 @@ def retrieve(
                 excerpt=excerpt,
                 score=round(score, 4),
                 updated_at=article.updated_at,
+                article_hash=object_digest(article.model_dump(mode="json")),
             )
         )
     return tuple(citations)

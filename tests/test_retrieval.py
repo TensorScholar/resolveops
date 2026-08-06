@@ -37,3 +37,13 @@ def test_retrieval_excludes_unapproved_and_expired() -> None:
         now=now,
     )
     assert results == ()
+
+
+def test_retrieval_excludes_future_dated_articles() -> None:
+    now = datetime.now(UTC)
+    results = retrieve(
+        "refund",
+        [article("future", "refund", updated_at=now + timedelta(days=1))],
+        now=now,
+    )
+    assert results == ()

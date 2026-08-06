@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
-from resolveops.domain.audit import make_event, verify_chain
-from resolveops.domain.errors import InvalidTransitionError, NotFoundError, PolicyDeniedError
+from resolveops.domain.audit import object_digest, verify_chain
+from resolveops.domain.errors import (
+    IntegrityError,
+    InvalidTransitionError,
+    NotFoundError,
+    PolicyDeniedError,
+)
 from resolveops.domain.models import (
     ActionExecution,
     AnalysisResult,
     Approval,
+    AuditEvent,
+    Citation,
     CustomerProfile,
     Disposition,
     EvaluationCase,
@@ -40,16 +48,42 @@ class ResolveOpsService:
         self.policy = policy or PolicySettings()
 
     def _audit(self, event_type: str, entity_id: str, payload: dict[str, object]) -> None:
+        self.store.append_audit_event(event_type, entity_id, payload)
+
+    def _verify_analysis_integrity(self, analysis: AnalysisResult) -> list[AuditEvent]:
         events = self.store.list_audit()
-        previous = events[-1].event_hash if events else "0" * 64
-        event = make_event(
-            sequence=len(events) + 1,
-            event_type=event_type,
-            entity_id=entity_id,
-            payload=payload,
-            previous_hash=previous,
-        )
-        self.store.append_audit(event)
+        verify_chain(events)
+        matches = [
+            event
+            for event in events
+            if event.event_type == "ticket.analyzed" and event.entity_id == analysis.id
+        ]
+        expected = object_digest(analysis.model_dump(mode="json"))
+        if len(matches) != 1 or matches[0].payload.get("analysis_hash") != expected:
+            raise IntegrityError("analysis record does not match its audit evidence")
+        return events
+
+    def _current_citations(self, analysis: AnalysisResult) -> tuple[Citation, ...]:
+        now = datetime.now(UTC)
+        articles = {article.id: article for article in self.store.list_articles()}
+        current: list[Citation] = []
+        for citation in analysis.citations:
+            article = articles.get(citation.article_id)
+            if article is None or not article.approved:
+                continue
+            if article.updated_at > now:
+                continue
+            if article.expires_at is not None and article.expires_at <= now:
+                continue
+            if (
+                article.updated_at != citation.updated_at
+                or article.source_uri != citation.source_uri
+                or citation.article_hash is None
+                or object_digest(article.model_dump(mode="json")) != citation.article_hash
+            ):
+                continue
+            current.append(citation)
+        return tuple(current)
 
     def seed_customer(self, customer: CustomerProfile) -> None:
         self.store.put_customer(customer)
@@ -101,6 +135,7 @@ class ResolveOpsService:
                 "intent": intent.value,
                 "disposition": analysis.disposition.value,
                 "citation_ids": [item.article_id for item in citations],
+                "analysis_hash": object_digest(analysis.model_dump(mode="json")),
             },
         )
         return analysis
@@ -116,11 +151,27 @@ class ResolveOpsService:
         analysis = self.store.get_analysis(analysis_id)
         if analysis is None:
             raise NotFoundError(f"analysis not found: {analysis_id}")
+        events = self._verify_analysis_integrity(analysis)
+        if any(
+            event.event_type == "analysis.reviewed"
+            and event.payload.get("analysis_id") == analysis.id
+            for event in events
+        ):
+            raise InvalidTransitionError("analysis has already been reviewed")
         if analysis.disposition is Disposition.DENY:
             raise PolicyDeniedError("denied analysis cannot be approved")
         if analysis.proposed_action is None:
             raise InvalidTransitionError("analysis has no action to review")
-        if analysis.disposition not in {Disposition.REVIEW_REQUIRED, Disposition.ESCALATE}:
+        decision = evaluate(
+            confidence=analysis.confidence,
+            citations=self._current_citations(analysis),
+            action=analysis.proposed_action,
+            settings=self.policy,
+        )
+        if not decision.action_allowed:
+            reason = decision.reasons[0] if decision.reasons else "policy_denied_action"
+            raise PolicyDeniedError(f"action is not allowed: {reason}")
+        if analysis.disposition is not Disposition.REVIEW_REQUIRED:
             raise InvalidTransitionError("analysis is not waiting for review")
         approval = Approval(
             analysis_id=analysis.id,
@@ -136,10 +187,15 @@ class ResolveOpsService:
         )
         if not approve:
             return approval, None
-        success, message, reference = self.action_executor.execute(
-            analysis.proposed_action,
-            approval=approval,
-        )
+        try:
+            success, message, reference = self.action_executor.execute(
+                analysis.proposed_action,
+                approval=approval,
+            )
+        except Exception:
+            success = False
+            message = "Action execution outcome is unknown; manual reconciliation is required."
+            reference = None
         execution = ActionExecution(
             analysis_id=analysis.id,
             approval_id=approval.id,

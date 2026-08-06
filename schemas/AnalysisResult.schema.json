@@ -64,6 +64,18 @@
     "Citation": {
       "additionalProperties": false,
       "properties": {
+        "article_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Article Hash"
+        },
         "article_id": {
           "title": "Article Id",
           "type": "string"

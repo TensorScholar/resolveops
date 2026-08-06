@@ -1,13 +1,9 @@
-from decimal import Decimal
-
 import pytest
 
 from resolveops.domain.errors import NotFoundError
 from resolveops.domain.models import (
-    CustomerProfile,
     Disposition,
     EvaluationSummary,
-    KnowledgeArticle,
     Outcome,
     Ticket,
 )

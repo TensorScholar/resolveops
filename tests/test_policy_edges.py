@@ -1,4 +1,8 @@
+from datetime import UTC, datetime
 from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
 
 from resolveops.domain.models import (
     ActionKind,
@@ -8,7 +12,6 @@ from resolveops.domain.models import (
     PolicySettings,
 )
 from resolveops.domain.policy import evaluate
-from datetime import UTC, datetime
 
 
 def cite() -> tuple[Citation, ...]:
@@ -39,7 +42,12 @@ def test_disallowed_action_denied() -> None:
     assert decision.disposition is Disposition.DENY
 
 
-def test_automatic_low_refund() -> None:
+def test_automatic_action_configuration_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        PolicySettings.model_validate({"action_requires_approval": False})
+
+
+def test_all_valid_actions_require_review() -> None:
     action = ActionProposal(
         kind=ActionKind.REFUND,
         resource_id="c",
@@ -50,29 +58,24 @@ def test_automatic_low_refund() -> None:
         confidence=1,
         citations=cite(),
         action=action,
-        settings=PolicySettings(
-            action_requires_approval=False,
-            auto_refund_limit=Decimal("10"),
-        ),
+        settings=PolicySettings(),
     )
-    assert decision.disposition is Disposition.RESPOND
+    assert decision.disposition is Disposition.REVIEW_REQUIRED
     assert decision.action_allowed
 
 
-def test_refund_above_auto_limit_requires_review() -> None:
+def test_unknown_plan_target_cannot_execute() -> None:
     action = ActionProposal(
-        kind=ActionKind.REFUND,
+        kind=ActionKind.PLAN_CHANGE,
         resource_id="c",
-        amount=Decimal("20"),
         reason="r",
     )
     decision = evaluate(
         confidence=1,
         citations=cite(),
         action=action,
-        settings=PolicySettings(
-            action_requires_approval=False,
-            auto_refund_limit=Decimal("10"),
-        ),
+        settings=PolicySettings(),
     )
     assert decision.disposition is Disposition.REVIEW_REQUIRED
+    assert not decision.action_allowed
+    assert decision.reasons == ("plan_target_unknown",)

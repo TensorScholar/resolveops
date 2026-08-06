@@ -21,6 +21,15 @@ def test_downgrade_action() -> None:
     assert action.target_plan == "basic"
 
 
+def test_ambiguous_plan_action_has_no_target() -> None:
+    action = propose_action(
+        Ticket(customer_id="c", message="change my plan"),
+        IntentKind.PLAN_CHANGE,
+    )
+    assert action is not None
+    assert action.target_plan is None
+
+
 def test_cancel_action() -> None:
     action = propose_action(
         Ticket(customer_id="c", message="cancel"),

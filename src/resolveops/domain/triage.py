@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from resolveops.domain.models import ActionKind, ActionProposal, IntentKind, Ticket
 
-_MONEY = re.compile(r"(?:\$|usd\s*)?(\d+(?:\.\d{1,2})?)", re.IGNORECASE)
+_MONEY = re.compile(r"(?:\$\s*|usd\s+)(\d+(?:\.\d{1,2})?)", re.IGNORECASE)
 
 
 def classify_intent(message: str) -> IntentKind:
@@ -43,7 +43,8 @@ def propose_action(ticket: Ticket, intent: IntentKind) -> ActionProposal | None:
             reason="Customer requested a refund.",
         )
     if intent is IntentKind.PLAN_CHANGE:
-        target = "pro" if "upgrade" in ticket.message.casefold() else "basic"
+        text = ticket.message.casefold()
+        target = "pro" if "upgrade" in text else "basic" if "downgrade" in text else None
         return ActionProposal(
             kind=ActionKind.PLAN_CHANGE,
             resource_id=ticket.customer_id,

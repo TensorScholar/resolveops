@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 import pytest
 
 from resolveops.domain.audit import make_event, verify_chain

@@ -27,3 +27,12 @@ def test_refund_action_extracts_money() -> None:
     assert action is not None
     assert action.kind is ActionKind.REFUND
     assert action.amount == Decimal("49.95")
+
+
+def test_refund_does_not_treat_unmarked_number_as_money() -> None:
+    action = propose_action(
+        Ticket(customer_id="c1", message="Refund order 12345"),
+        IntentKind.REFUND,
+    )
+    assert action is not None
+    assert action.amount is None

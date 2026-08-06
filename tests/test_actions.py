@@ -52,3 +52,24 @@ def test_executor_cancel() -> None:
         approval=approval(ReviewState.APPROVED),
     )
     assert ok and reference and reference.startswith("cancel_")
+
+
+def test_executor_rejects_ambiguous_actions() -> None:
+    refund_ok, _, refund_reference = MockActionExecutor().execute(
+        ActionProposal(
+            kind=ActionKind.REFUND,
+            resource_id="c",
+            reason="test",
+        ),
+        approval=approval(ReviewState.APPROVED),
+    )
+    plan_ok, _, plan_reference = MockActionExecutor().execute(
+        ActionProposal(
+            kind=ActionKind.PLAN_CHANGE,
+            resource_id="c",
+            reason="test",
+        ),
+        approval=approval(ReviewState.APPROVED),
+    )
+    assert not refund_ok and refund_reference is None
+    assert not plan_ok and plan_reference is None

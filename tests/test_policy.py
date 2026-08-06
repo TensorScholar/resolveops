@@ -80,6 +80,7 @@ def test_unknown_refund_amount_requires_review() -> None:
         settings=PolicySettings(),
     )
     assert decision.disposition is Disposition.REVIEW_REQUIRED
+    assert not decision.action_allowed
 
 
 def test_stale_evidence_escalates() -> None:

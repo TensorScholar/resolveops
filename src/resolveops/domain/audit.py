@@ -12,7 +12,17 @@ from resolveops.domain.models import AuditEvent
 
 
 def canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def object_digest(value: object) -> str:
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
 def event_digest(
@@ -32,7 +42,7 @@ def event_digest(
         "occurred_at": occurred_at.astimezone(UTC).isoformat(),
         "previous_hash": previous_hash,
     }
-    return hashlib.sha256(canonical_json(body).encode()).hexdigest()
+    return object_digest(body)
 
 
 def make_event(

@@ -57,6 +57,31 @@ def test_denied_refund_cannot_be_approved(service) -> None:
         service.review(analysis.id, reviewer="manager@example.com", approve=True)
 
 
+def test_unknown_refund_amount_cannot_be_approved(service) -> None:
+    analysis = service.analyze(Ticket(customer_id="cust_1", message="Refund me"))
+    with pytest.raises(PolicyDeniedError, match="refund_amount_unknown"):
+        service.review(analysis.id, reviewer="manager@example.com", approve=True)
+    assert service.store.list_executions() == []
+
+
+def test_missing_evidence_action_cannot_be_approved(service) -> None:
+    service.store.articles.clear()
+    analysis = service.analyze(Ticket(customer_id="cust_1", message="Refund $49"))
+    with pytest.raises(PolicyDeniedError, match="insufficient_current_evidence"):
+        service.review(analysis.id, reviewer="manager@example.com", approve=True)
+    assert service.store.list_executions() == []
+
+
+def test_review_cannot_be_replayed(service) -> None:
+    analysis = service.analyze(
+        Ticket(customer_id="cust_1", message="I was charged twice, refund $49")
+    )
+    service.review(analysis.id, reviewer="manager@example.com", approve=True)
+    with pytest.raises(InvalidTransitionError, match="already been reviewed"):
+        service.review(analysis.id, reviewer="other@example.com", approve=True)
+    assert len(service.store.list_executions()) == 1
+
+
 def test_metrics_are_outcome_based(service) -> None:
     ticket = Ticket(customer_id="cust_1", message="What is the refund policy?")
     service.analyze(ticket)

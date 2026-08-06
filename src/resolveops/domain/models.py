@@ -95,6 +95,7 @@ class Citation(StrictModel):
     excerpt: str
     score: float = Field(ge=0, le=1)
     updated_at: AwareDatetime
+    article_hash: str | None = None
 
 
 class ActionProposal(StrictModel):
@@ -122,9 +123,9 @@ class AnalysisResult(StrictModel):
 class Approval(StrictModel):
     id: str = Field(default_factory=lambda: f"apr_{uuid4().hex}")
     analysis_id: str
-    reviewer: str
+    reviewer: str = Field(min_length=1, max_length=320)
     state: ReviewState
-    note: str = ""
+    note: str = Field(default="", max_length=2_000)
     created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
@@ -154,8 +155,6 @@ class PolicySettings(StrictModel):
     minimum_citations: int = Field(default=1, ge=0)
     maximum_article_age_days: int = Field(default=180, ge=1)
     maximum_refund: StrictMoney = Decimal("250")
-    auto_refund_limit: StrictMoney = Decimal("0")
-    action_requires_approval: bool = True
     allowed_actions: frozenset[ActionKind] = frozenset(
         {ActionKind.REFUND, ActionKind.PLAN_CHANGE, ActionKind.CANCELLATION}
     )

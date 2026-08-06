@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from threading import RLock
+
+from resolveops.domain.audit import make_event
+from resolveops.domain.errors import IntegrityError, InvalidTransitionError
 from resolveops.domain.models import (
     ActionExecution,
     AnalysisResult,
@@ -21,9 +25,11 @@ class MemoryStore:
         self.articles: dict[str, KnowledgeArticle] = {}
         self.analyses: dict[str, AnalysisResult] = {}
         self.approvals: dict[str, Approval] = {}
+        self._approval_by_analysis: dict[str, str] = {}
         self.executions: dict[str, ActionExecution] = {}
         self.outcomes: list[Outcome] = []
         self.audit: list[AuditEvent] = []
+        self._lock = RLock()
 
     def put_ticket(self, ticket: Ticket) -> None:
         self.tickets[ticket.id] = ticket
@@ -53,7 +59,11 @@ class MemoryStore:
         return list(self.analyses.values())
 
     def put_approval(self, approval: Approval) -> None:
-        self.approvals[approval.id] = approval
+        with self._lock:
+            if approval.analysis_id in self._approval_by_analysis:
+                raise InvalidTransitionError("analysis has already been reviewed")
+            self.approvals[approval.id] = approval
+            self._approval_by_analysis[approval.analysis_id] = approval.id
 
     def get_approval(self, approval_id: str) -> Approval | None:
         return self.approvals.get(approval_id)
@@ -71,7 +81,26 @@ class MemoryStore:
         return list(self.outcomes)
 
     def append_audit(self, event: AuditEvent) -> None:
-        self.audit.append(event)
+        with self._lock:
+            if self.audit and event.sequence <= self.audit[-1].sequence:
+                raise IntegrityError("audit sequence must be append-only")
+            self.audit.append(event)
+
+    def append_audit_event(
+        self, event_type: str, entity_id: str, payload: dict[str, object]
+    ) -> AuditEvent:
+        with self._lock:
+            previous = self.audit[-1].event_hash if self.audit else "0" * 64
+            event = make_event(
+                sequence=len(self.audit) + 1,
+                event_type=event_type,
+                entity_id=entity_id,
+                payload=payload,
+                previous_hash=previous,
+            )
+            self.audit.append(event)
+            return event
 
     def list_audit(self) -> list[AuditEvent]:
-        return list(self.audit)
+        with self._lock:
+            return list(self.audit)
