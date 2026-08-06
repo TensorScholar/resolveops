@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from resolveops.application.bootstrap import build_service
+from resolveops.bootstrap import build_service
 from resolveops.domain.models import CustomerProfile, KnowledgeArticle, Outcome, Ticket
 
 

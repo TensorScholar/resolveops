@@ -3,7 +3,7 @@
 ResolveOps is a modular monolith.
 
 ```text
-CLI / FastAPI
+CLI / FastAPI / composition root
      |
 application service
      |
@@ -18,10 +18,10 @@ memory   mock action executor
 Dependency rules:
 
 - `domain` imports only the standard library and Pydantic schema types.
-- `application` imports domain and ports.
+- `application` imports domain and ports, never adapters.
 - `ports` import domain types.
 - `adapters` implement ports.
-- `web` and `cli` compose the application.
+- the top-level composition root selects adapters for `web`, `cli`, and demos.
 - no domain module imports FastAPI, SQLite, Typer, or a vendor SDK.
 
 Vertical slices are preferred over empty architecture layers. A new action must include:

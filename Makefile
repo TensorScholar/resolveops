@@ -12,4 +12,4 @@ demo:
 	resolveops demo
 
 build:
-	python setup.py sdist bdist_wheel
+	python -m build

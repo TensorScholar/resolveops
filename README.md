@@ -21,16 +21,19 @@ Most support demos stop after generating text. ResolveOps demonstrates the harde
 - append-only audit evidence;
 - outcome metrics, including cost per successful resolution;
 - an export contract for InferenceLedger;
-- an authorization port that can later be backed by AgentGuard.
+- an `ActionExecutor` port that can be wrapped by a production authorization adapter.
 
-The default implementation is offline and deterministic. It does not require an API key and does not pretend to be production-ready.
+The default implementation is offline and its decision path is deterministic. Generated
+identifiers and timestamps are intentionally unique, so complete JSON output is not
+byte-for-byte reproducible. It does not require an API key and does not pretend to be
+production-ready.
 
 ## Quick start
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev,web]'
+python -m pip install -e '.[dev,web]'
 resolveops demo
 pytest
 ```
@@ -86,4 +89,5 @@ verifies the audit chain.
 
 ## Status
 
-**Engineering release candidate for demonstration and external review. Not production-ready.**
+**Version 0.1.0rc2 is an engineering release candidate for demonstration and external
+review. It is not production-ready.**

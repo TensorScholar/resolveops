@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from resolveops.application.bootstrap import build_service
+from pydantic import BaseModel, ConfigDict, Field
+
+from resolveops._version import __version__
+from resolveops.bootstrap import build_service
+from resolveops.domain.errors import InvalidTransitionError, NotFoundError, PolicyDeniedError
 from resolveops.domain.models import CustomerProfile, KnowledgeArticle, Outcome, Ticket
+
+
+class ReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer: str = Field(min_length=1, max_length=320)
+    approve: bool = True
+    note: str = Field(default="", max_length=2_000)
 
 
 def create_app(database: str | Path = "resolveops.db") -> object:
@@ -15,7 +27,14 @@ def create_app(database: str | Path = "resolveops.db") -> object:
         raise RuntimeError("Install ResolveOps with the 'web' extra.") from exc
 
     service = build_service(database)
-    app = FastAPI(title="ResolveOps", version="0.1.0rc1")
+    app = FastAPI(title="ResolveOps", version=__version__)
+
+    def domain_error(exc: Exception) -> HTTPException:
+        if isinstance(exc, NotFoundError):
+            return HTTPException(status_code=404, detail=str(exc))
+        if isinstance(exc, (InvalidTransitionError, PolicyDeniedError)):
+            return HTTPException(status_code=409, detail=str(exc))
+        return HTTPException(status_code=400, detail="Request could not be processed.")
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -35,17 +54,20 @@ def create_app(database: str | Path = "resolveops.db") -> object:
     def analyze(ticket: Ticket) -> dict[str, object]:
         try:
             return service.analyze(ticket).model_dump(mode="json")
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+            raise domain_error(exc) from exc
 
     @app.post("/analyses/{analysis_id}/approve")
-    def approve(analysis_id: str, reviewer: str, approve: bool = True) -> dict[str, object]:
+    def approve(analysis_id: str, request: ReviewRequest) -> dict[str, object]:
         try:
             approval, execution = service.review(
-                analysis_id, reviewer=reviewer, approve=approve
+                analysis_id,
+                reviewer=request.reviewer,
+                approve=request.approve,
+                note=request.note,
             )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+            raise domain_error(exc) from exc
         return {
             "approval": approval.model_dump(mode="json"),
             "execution": execution.model_dump(mode="json") if execution else None,
@@ -53,7 +75,10 @@ def create_app(database: str | Path = "resolveops.db") -> object:
 
     @app.post("/outcomes")
     def outcome(item: Outcome) -> dict[str, str]:
-        service.record_outcome(item)
+        try:
+            service.record_outcome(item)
+        except (NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+            raise domain_error(exc) from exc
         return {"status": "recorded"}
 
     @app.get("/metrics")

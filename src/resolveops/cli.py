@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from resolveops._version import __version__
-from resolveops.application.bootstrap import build_service
+from resolveops.bootstrap import build_service
 from resolveops.demo import run_demo
 from resolveops.domain.models import CustomerProfile, KnowledgeArticle, Ticket
 from resolveops.evaluation import load_cases

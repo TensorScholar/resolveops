@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "resolveops"
-version = "0.1.0rc1"
+version = "0.1.0rc2"
 description = "Evidence-grounded customer support operations with approval-gated actions and measurable outcomes."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,12 +22,13 @@ dependencies = [
   "pydantic>=2.10,<3",
   "PyYAML>=6,<7",
   "typer>=0.16,<1",
-  "rich>=13,<15",
+  "rich>=13,<16",
 ]
 
 [project.optional-dependencies]
 web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 dev = [
+  "build>=1.2,<2",
   "coverage>=7.6,<8",
   "httpx>=0.27,<1",
   "mypy>=1.14,<2",
@@ -35,6 +36,7 @@ dev = [
   "pytest>=8.3,<10",
   "pytest-cov>=6,<8",
   "ruff>=0.12,<1",
+  "twine>=6,<7",
 ]
 
 [project.scripts]
