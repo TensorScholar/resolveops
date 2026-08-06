@@ -21,16 +21,12 @@ def test_seed_article_type_guard(service) -> None:
 
 def test_record_unknown_outcome_fails(service) -> None:
     with pytest.raises(NotFoundError):
-        service.record_outcome(
-            Outcome(ticket_id="missing", resolved=False, escalated=True)
-        )
+        service.record_outcome(Outcome(ticket_id="missing", resolved=False, escalated=True))
 
 
 def test_missing_evidence_escalates(service) -> None:
     service.store.articles.clear()
-    result = service.analyze(
-        Ticket(customer_id="cust_1", message="What is the password policy?")
-    )
+    result = service.analyze(Ticket(customer_id="cust_1", message="What is the password policy?"))
     assert result.disposition is Disposition.ESCALATE
     assert result.confidence == 0.25
 
