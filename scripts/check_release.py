@@ -19,13 +19,16 @@ if args.tag != expected_tag:
     raise SystemExit(f"tag mismatch: expected {expected_tag}, got {args.tag}")
 
 required_files = (
-    "AUDIT_REPORT.md",
     "CHANGELOG.md",
     "CITATION.cff",
+    "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
     "SECURITY.md",
-    "THREAT_MODEL.md",
+    "docs/README.md",
+    "docs/release-validation.md",
+    "docs/releasing.md",
+    "docs/security-model.md",
 )
 for path in required_files:
     if not Path(path).is_file():
@@ -50,8 +53,19 @@ if str(citation.get("version")) != version:
 if f"## {version}" not in Path("CHANGELOG.md").read_text(encoding="utf-8"):
     raise SystemExit("CHANGELOG.md has no section for the release version")
 
-for forbidden in ("CODEX_TASK.md", "INDEPENDENT_VERIFICATION.md", "START_HERE.md"):
+for forbidden in (
+    "AUDIT_REPORT.md",
+    "CODEX_TASK.md",
+    "GOVERNANCE.md",
+    "INDEPENDENT_VERIFICATION.md",
+    "PROJECT_STATUS.md",
+    "PUBLISHING.md",
+    "ROADMAP.md",
+    "START_HERE.md",
+    "SUPPORT.md",
+    "THREAT_MODEL.md",
+):
     if Path(forbidden).exists():
-        raise SystemExit(f"handoff-only file must not be released: {forbidden}")
+        raise SystemExit(f"obsolete or handoff-only file must not be released: {forbidden}")
 
 print(f"release metadata valid for {args.tag}")

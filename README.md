@@ -1,34 +1,46 @@
 # ResolveOps
 
-**Evidence-grounded customer support operations with approval-gated actions and measurable outcomes.**
+[![CI](https://github.com/TensorScholar/resolveops/actions/workflows/ci.yml/badge.svg)](https://github.com/TensorScholar/resolveops/actions/workflows/ci.yml)
 
-ResolveOps is not a generic chatbot. It is a compact, inspectable reference system for the workflow companies actually need:
+**Evidence-grounded customer support operations with policy-gated actions, human approval, and tamper-evident audit trails.**
+
+ResolveOps is a compact reference implementation for support workflows where generating a response is only one part of the job. It combines customer context, approved knowledge, deterministic policy, explicit action proposals, human review, execution records, and measurable outcomes in one inspectable system.
 
 ```text
-ticket → customer context → approved evidence → draft → policy decision
-       → human approval when necessary → action → outcome and cost measurement
+ticket
+  ↓
+customer context + approved knowledge
+  ↓
+evidence-grounded analysis
+  ↓
+deterministic policy decision
+  ↓
+action proposal
+  ↓
+human approval when required
+  ↓
+execution + outcome + audit evidence
 ```
 
-## Why this project exists
+## What it demonstrates
 
-Most support demos stop after generating text. ResolveOps demonstrates the harder product work:
-
-- retrieval with visible source metadata;
-- fail-safe escalation when evidence is missing or stale;
-- explicit action proposals rather than hidden tool calls;
-- mandatory human review for destructive actions by default;
-- deterministic business policy separated from the response generator;
-- append-only audit evidence;
+- retrieval with visible source metadata and evidence freshness checks;
+- fail-closed behavior when evidence is missing, stale, revoked, or ambiguous;
+- deterministic business policy separated from response generation;
+- explicit refund, plan-change, and cancellation proposals instead of hidden tool calls;
+- mandatory human review for destructive actions in this release;
+- replay-resistant review and execution state transitions;
+- hash-chained audit evidence with persisted analysis and citation digests;
+- SQLite or in-memory persistence;
 - outcome metrics, including cost per successful resolution;
-- an export contract for InferenceLedger;
-- an `ActionExecutor` port that can be wrapped by a production authorization adapter.
+- fixture-based evaluation, CLI workflows, and an optional FastAPI adapter;
+- an `ActionExecutor` port for integrating a production authorization/execution boundary.
 
-The default implementation is offline and its decision path is deterministic. Generated
-identifiers and timestamps are intentionally unique, so complete JSON output is not
-byte-for-byte reproducible. It does not require an API key and does not pretend to be
-production-ready.
+The default implementation is offline and deterministic. It requires no API key and no hidden LLM dependency.
 
 ## Quick start
+
+Requires Python 3.11 or newer.
 
 ```bash
 python -m venv .venv
@@ -38,56 +50,99 @@ resolveops demo
 pytest
 ```
 
-Run the API:
+Run the optional API adapter:
 
 ```bash
 resolveops serve
 ```
 
-## Product boundary
-
-Included in v0.1:
-
-- ticket analysis;
-- customer context;
-- approved knowledge articles and citations;
-- deterministic triage;
-- refund, plan-change, and cancellation proposals;
-- review and mock execution;
-- SQLite or in-memory persistence;
-- hash-chained audit verification;
-- outcome metrics and fixture-based evaluation;
-- CLI and optional FastAPI adapter.
-
-Explicitly not included:
-
-- a live payment processor;
-- a credential vault;
-- autonomous refunds without configured policy;
-- a hosted multi-tenant control plane;
-- a hidden LLM dependency;
-- claims of production readiness.
-
 ## Architecture
 
-ResolveOps uses a modular monolith with hexagonal boundaries:
+ResolveOps is a modular monolith with hexagonal boundaries:
 
 ```text
 domain → application → ports ← adapters
 ```
 
-The domain has no FastAPI, SQLite, vendor SDK, or network dependency. The composition root chooses adapters.
+The domain layer has no FastAPI, SQLite, vendor SDK, or network dependency. Adapter selection happens at the composition root.
 
-See [docs/architecture.md](docs/architecture.md), [THREAT_MODEL.md](THREAT_MODEL.md), and
-[docs/product-metrics.md](docs/product-metrics.md).
+```text
+src/resolveops/
+├── domain/        # models, policy, audit rules
+├── application/   # use-case orchestration
+├── ports/         # integration contracts
+├── adapters/      # persistence and execution adapters
+├── web/           # optional FastAPI adapter
+├── bootstrap.py   # composition root
+├── cli.py
+└── demo.py
+```
 
-## Demo result
+See [Architecture](docs/architecture.md) and the [ADRs](docs/adr/).
 
-The bundled demo analyzes a duplicate-charge request, cites an approved refund policy,
-requires human review, executes a mock refund after approval, records the outcome, and
-verifies the audit chain.
+## Safety model
+
+High-impact actions are deliberately constrained:
+
+- policy is deterministic and does not consume model instructions;
+- evidence must be approved and current;
+- ambiguous amounts or action targets fail closed;
+- destructive actions require explicit review;
+- one analysis cannot be approved or executed repeatedly;
+- persisted analyses and retrieved evidence are bound into audit records;
+- external execution failures are recorded without blind replay.
+
+The audit chain is tamper-evident, not tamper-proof. Stronger deployment boundaries require external audit-head anchoring, authentication, authorization, tenant isolation, provider idempotency, and production secret management.
+
+See [Security model](docs/security-model.md), [Security policy](SECURITY.md), and [Limitations](docs/limitations.md).
+
+## Validation
+
+The current `0.1.0rc2` candidate has been validated on the canonical GitHub `main` commit across Python 3.11, 3.12, and 3.13. The final CI matrix passes formatting, linting, strict type checking, architecture checks, secret/static-security checks, schema consistency, the full test suite, branch coverage, the offline demo, and dependency auditing.
+
+The validated test suite contains **72 tests** with **96.11% branch-aware coverage** against an 85% required threshold.
+
+Detailed scope, reproduced failures, remediation, residual risks, and release evidence are recorded in [Release validation](docs/release-validation.md).
+
+## Product boundary
+
+Included in this release candidate:
+
+- evidence-grounded ticket analysis;
+- approved knowledge citations;
+- deterministic triage and action policy;
+- human-gated refund, plan-change, and cancellation flows;
+- mock execution;
+- SQLite and in-memory persistence;
+- audit verification;
+- evaluation fixtures and outcome metrics;
+- CLI and optional FastAPI interfaces.
+
+Not included:
+
+- live CRM, billing, email, or help-desk connectors;
+- production identity, authorization, or tenant isolation;
+- a credential vault or production secret-management boundary;
+- active-active or multi-region persistence;
+- autonomous destructive actions;
+- a hosted multi-tenant control plane.
+
+## Documentation
+
+Start with the [documentation index](docs/README.md).
+
+- [Architecture](docs/architecture.md)
+- [Integration contracts](docs/integration-contracts.md)
+- [Security model](docs/security-model.md)
+- [Limitations](docs/limitations.md)
+- [Product metrics](docs/product-metrics.md)
+- [Roadmap](docs/roadmap.md)
+- [Release validation](docs/release-validation.md)
+- [Release process](docs/releasing.md)
+- [Changelog](CHANGELOG.md)
 
 ## Status
 
-**Version 0.1.0rc2 is an engineering release candidate for demonstration and external
-review. It is not production-ready.**
+**ResolveOps 0.1.0rc2 is an engineering release candidate for demonstration and external review.** The repository has strong automated validation, but the current implementation is not a complete production deployment boundary.
+
+Licensed under the Apache License 2.0.
