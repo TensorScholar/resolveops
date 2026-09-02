@@ -95,7 +95,7 @@ def build_service(path, executor) -> ResolveOpsService:
     return service
 
 
-def test_process_termination_leaves_recoverable_pending_execution(tmp_path) -> None:
+def test_process_termination_leaves_auditable_in_flight_execution(tmp_path) -> None:
     database = tmp_path / "crash.db"
     provider = FakeProvider()
     first = build_service(database, CrashAfterSideEffectExecutor(provider))
@@ -107,10 +107,18 @@ def test_process_termination_leaves_recoverable_pending_execution(tmp_path) -> N
     persisted = SQLiteStore(database)
     executions = persisted.list_executions()
     assert len(executions) == 1
-    pending = executions[0]
-    assert pending.state is ExecutionState.PENDING
-    assert pending.attempt_count == 0
-    assert persisted.get_approval(pending.approval_id) is not None
+    in_flight = executions[0]
+    assert in_flight.state is ExecutionState.IN_FLIGHT
+    assert in_flight.attempt_count == 1
+    assert persisted.get_approval(in_flight.approval_id) is not None
+    attempt_events = [
+        event
+        for event in persisted.list_audit()
+        if event.entity_id == in_flight.id
+        and event.event_type == "action.execution_attempt_started"
+    ]
+    assert len(attempt_events) == 1
+    assert attempt_events[0].payload["attempt_count"] == 1
     assert provider.effect_count == 1
 
     restarted = ResolveOpsService(
@@ -119,11 +127,11 @@ def test_process_termination_leaves_recoverable_pending_execution(tmp_path) -> N
         action_executor=CrashAfterSideEffectExecutor(provider),
     )
     restarted.verify_audit()
-    recovered = restarted.reconcile_execution(pending.id)
+    recovered = restarted.reconcile_execution(in_flight.id)
 
     assert recovered.state is ExecutionState.SUCCEEDED
-    assert recovered.external_reference == provider.effects[pending.idempotency_key]
-    assert recovered.attempt_count == 1
+    assert recovered.external_reference == provider.effects[in_flight.idempotency_key]
+    assert recovered.attempt_count == 2
     assert provider.effect_count == 1
     restarted.verify_audit()
 
