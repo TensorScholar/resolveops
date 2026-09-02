@@ -8,6 +8,9 @@
   identity is enforced;
 - provider-specific retry windows, webhook authenticity, and reconciliation semantics are not
   validated until the first real adapter exists;
+- legacy pre-lifecycle SQLite databases with ambiguous execution history are rejected at startup
+  rather than guessed into the new state model; current-format execution rows can be backfilled
+  into the execution-claim index only after their approval/execution identity is verified;
 - lexical retrieval is intentionally small and inspectable;
 - no identity provider or multi-tenant authorization boundary;
 - SQLite is a single-node persistence and coordination boundary;
