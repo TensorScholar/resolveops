@@ -6,6 +6,10 @@
   ResolveOps treats a repeated ID with changed content as an integrity conflict rather than a
   mutable case revision, so an upstream integration that edits cases in place needs an explicit
   immutable event/version identity contract;
+- an exact replay returns the already-created resolution transaction and intentionally does not
+  regenerate it from mutable customer-profile state; upstream authorization and mutable case
+  revisions therefore require their own integration contracts rather than changing replay
+  semantics;
 - concurrent duplicate ingestion can still repeat classification/retrieval/generation work
   before one canonical analysis wins the store transaction; persistence and downstream action
   identity remain deduplicated, but duplicate model/provider compute is not yet suppressed;
@@ -14,9 +18,10 @@
 - legacy pre-lifecycle SQLite databases with ambiguous execution history are rejected at startup
   rather than guessed into the new state model; current-format execution rows can be backfilled
   into the execution-claim index only after their approval/execution identity is verified;
-- legacy SQLite databases can backfill one audited analysis per ticket into the canonical
-  analysis-claim index; multiple historical analyses for one ticket are rejected because choosing
-  a canonical resolution transaction would be ambiguous;
+- pre-canonical analysis history can be backfilled only when its audit event already binds both
+  the exact ticket payload digest and analysis digest; older `ticket.analyzed` events that lack
+  `ticket_hash`, or multiple historical analyses for one ticket, are rejected at startup rather
+  than guessed into a canonical resolution transaction;
 - lexical retrieval is intentionally small and inspectable;
 - no identity provider or multi-tenant authorization boundary;
 - SQLite is a single-node persistence and coordination boundary;
