@@ -20,6 +20,6 @@
 
 The execution lifecycle prevents blind replay of one approved resolution transaction and can
 preserve/reconcile ambiguous local state. It does **not** yet provide case-ingestion idempotency,
-and it does not by itself guarantee idempotency at an external provider. The next must be fixed
+and it does not by itself guarantee idempotency at an external provider. The former must be fixed
 before a live action connector is enabled; the latter must be established by the specific
 adapter and provider contract.
