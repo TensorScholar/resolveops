@@ -174,9 +174,7 @@ def test_explicit_reference_selects_exact_payment_without_customer_search() -> N
 
     assert analysis.proposed_action is not None
     assert analysis.proposed_action.resource_id == "pay_b"
-    assert analysis.proposed_action.resource_hash == object_digest(
-        second.model_dump(mode="json")
-    )
+    assert analysis.proposed_action.resource_hash == object_digest(second.model_dump(mode="json"))
 
 
 def test_payment_state_change_before_approval_fails_closed() -> None:
