@@ -58,6 +58,7 @@ class ReviewState(StrEnum):
 
 class ExecutionState(StrEnum):
     PENDING = "pending"
+    IN_FLIGHT = "in_flight"
     SUBMITTED = "submitted"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -170,9 +171,11 @@ class ActionExecution(StrictModel):
                 raise ValueError("pending execution cannot have provider result data")
         elif self.attempt_count == 0:
             raise ValueError("non-pending execution must have at least one provider attempt")
-        if self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}:
-            if not self.external_reference:
-                raise ValueError("submitted or succeeded execution requires external reference")
+        if (
+            self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}
+            and not self.external_reference
+        ):
+            raise ValueError("submitted or succeeded execution requires external reference")
         return self
 
 
@@ -184,13 +187,15 @@ class ExecutionResult(StrictModel):
 
     @model_validator(mode="after")
     def validate_provider_result(self) -> ExecutionResult:
-        if self.state is ExecutionState.PENDING:
-            raise ValueError("pending is reserved for an unattempted local execution claim")
-        if self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}:
-            if not self.external_reference:
-                raise ValueError(
-                    "submitted or succeeded provider result requires external reference"
-                )
+        if self.state in {ExecutionState.PENDING, ExecutionState.IN_FLIGHT}:
+            raise ValueError("provider result cannot use an internal execution state")
+        if (
+            self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}
+            and not self.external_reference
+        ):
+            raise ValueError(
+                "submitted or succeeded provider result requires external reference"
+            )
         return self
 
 
