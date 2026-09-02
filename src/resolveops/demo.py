@@ -11,12 +11,19 @@ from resolveops.domain.models import (
     ExecutionState,
     KnowledgeArticle,
     Outcome,
+    PaymentSnapshot,
     Ticket,
 )
 
 
 def run_demo(database: str | None = None) -> dict[str, object]:
-    service = build_service(database)
+    payment = PaymentSnapshot(
+        id="pay_demo_duplicate_charge",
+        customer_id="cust_demo",
+        amount=Decimal("49.00"),
+        currency="usd",
+    )
+    service = build_service(database, payments=(payment,))
     service.seed_customer(
         CustomerProfile(
             id="cust_demo",
@@ -41,6 +48,7 @@ def run_demo(database: str | None = None) -> dict[str, object]:
     ticket = Ticket(
         customer_id="cust_demo",
         message="I was charged twice. Please refund $49.00.",
+        payment_reference=payment.id,
     )
     analysis = service.analyze(ticket)
     approval, execution = service.review(
