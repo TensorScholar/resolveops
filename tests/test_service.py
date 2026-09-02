@@ -75,8 +75,9 @@ def test_unknown_refund_amount_cannot_be_approved(service) -> None:
 
 
 def test_missing_evidence_action_cannot_be_approved(service) -> None:
-    service.store.articles.clear()
     analysis = service.analyze(Ticket(customer_id="cust_1", message="Refund $49"))
+    assert analysis.disposition is Disposition.REVIEW_REQUIRED
+    service.store.articles.clear()
     with pytest.raises(PolicyDeniedError, match="insufficient_current_evidence"):
         service.review(analysis.id, reviewer="manager@example.com", approve=True)
     assert service.store.list_executions() == []
