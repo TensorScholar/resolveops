@@ -18,7 +18,10 @@ def client_with_payment(tmp_path) -> TestClient:
                     id="pay-c",
                     customer_id="c",
                     amount=Decimal("100.00"),
+                    amount_refunded=Decimal("0.00"),
                     currency="usd",
+                    refundable=True,
+                    status="succeeded",
                 ),
             ),
         )
