@@ -21,6 +21,16 @@ from resolveops.domain.models import (
 )
 
 
+class MismatchedBillingReader:
+    def __init__(self, returned: PaymentSnapshot, *, expected_lookup: str) -> None:
+        self.returned = returned
+        self.expected_lookup = expected_lookup
+
+    def get_payment(self, payment_id: str) -> PaymentSnapshot | None:
+        assert payment_id == self.expected_lookup
+        return self.returned
+
+
 def seed_service(service: ResolveOpsService) -> None:
     service.seed_customer(CustomerProfile(id="cust"))
     service.seed_customer(CustomerProfile(id="other"))
@@ -104,17 +114,11 @@ def test_unknown_payment_reference_escalates() -> None:
 
 def test_billing_reader_cannot_substitute_a_different_payment_identity() -> None:
     returned = payment(payment_id="pay_other")
-
-    class MismatchedBillingReader:
-        def get_payment(self, payment_id: str) -> PaymentSnapshot | None:
-            assert payment_id == "pay_1"
-            return returned
-
     service = ResolveOpsService(
         store=MemoryStore(),
         generator=DeterministicResponseGenerator(),
         action_executor=MockActionExecutor(),
-        billing_reader=MismatchedBillingReader(),
+        billing_reader=MismatchedBillingReader(returned, expected_lookup="pay_1"),
     )
     seed_service(service)
 
@@ -122,6 +126,21 @@ def test_billing_reader_cannot_substitute_a_different_payment_identity() -> None
         service.analyze(refund_ticket(payment_reference="pay_1"))
 
     assert service.store.list_analyses() == []
+    assert service.store.list_executions() == []
+
+
+def test_billing_reader_cannot_substitute_identity_during_approval() -> None:
+    original = payment(payment_id="pay_1")
+    service, _ = build_service(original)
+    analysis = service.analyze(refund_ticket(payment_reference="pay_1"))
+    service.billing_reader = MismatchedBillingReader(
+        payment(payment_id="pay_other"),
+        expected_lookup="pay_1",
+    )
+
+    with pytest.raises(IntegrityError, match="mismatched identity"):
+        service.review(analysis.id, reviewer="manager@example.com", approve=True)
+
     assert service.store.list_executions() == []
 
 
