@@ -31,6 +31,17 @@ def test_refund_does_not_treat_unmarked_number_as_money() -> None:
     assert extract_refund_request("Refund order 12345") == (None, None)
 
 
+def test_refund_does_not_guess_between_distinct_money_values() -> None:
+    assert extract_refund_request("Charged $100; please refund $20") == (None, "usd")
+
+
+def test_repeated_same_money_value_remains_unambiguous() -> None:
+    assert extract_refund_request("Charged $49 twice; refund $49") == (
+        Decimal("49.00"),
+        "usd",
+    )
+
+
 def test_triage_cannot_create_customer_targeted_refund_action() -> None:
     ticket = Ticket(customer_id="c1", message="Refund $49.95")
     assert propose_action(ticket, IntentKind.REFUND) is None
