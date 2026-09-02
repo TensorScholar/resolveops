@@ -247,6 +247,8 @@ class ResolveOpsService:
         payment = self.billing_reader.get_payment(action.resource_id)
         if payment is None:
             raise PolicyDeniedError("refund payment target is no longer available")
+        if payment.id != action.resource_id:
+            raise IntegrityError("billing reader returned a payment with mismatched identity")
         if payment.customer_id != ticket.customer_id:
             raise PolicyDeniedError("refund payment ownership changed before approval")
         if object_digest(payment.model_dump(mode="json")) != action.resource_hash:
