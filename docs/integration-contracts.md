@@ -44,6 +44,11 @@ must return either the payment whose `id` exactly equals the requested `payment_
 returning a different payment is an integrity violation and ResolveOps fails the ingestion before
 persisting an analysis.
 
+All safety-relevant `PaymentSnapshot` state is explicit. `amount_refunded`, `refundable`, and
+`status` are required fields rather than optimistic defaults, so an incomplete adapter mapping is
+rejected by schema/model validation instead of being treated as an unrefunded, refundable,
+succeeded payment.
+
 Before a refund action can be proposed, ResolveOps verifies:
 
 - the explicit payment exists;
@@ -53,6 +58,11 @@ Before a refund action can be proposed, ResolveOps verifies:
 - an explicitly stated refund currency matches the payment currency;
 - the requested amount, when known, does not exceed the remaining refundable amount.
 
+Refund amount extraction is deliberately conservative. An unmarked number is not money, and if
+customer text contains multiple distinct explicit USD amounts, ResolveOps does not guess which one
+is the refund amount. The proposal remains non-executable until an unambiguous amount is supplied.
+Repeated occurrences of the same explicit amount remain unambiguous.
+
 A valid refund `ActionProposal` is then bound to:
 
 - `resource_kind=payment`;
@@ -61,9 +71,10 @@ A valid refund `ActionProposal` is then bound to:
 - the normalized payment currency;
 - the requested amount, when explicitly known.
 
-At approval time, ResolveOps reads the same payment ID again. Ownership must still match and the
-current normalized snapshot digest must equal the digest reviewed during analysis. If the payment
-disappears or its state changes, approval fails closed and a new analysis is required.
+At approval time, ResolveOps reads the same payment ID again. The returned identity and ownership
+must still match, and the current normalized snapshot digest must equal the digest reviewed during
+analysis. If the reader substitutes another identity, or the payment disappears or changes,
+approval fails closed before execution persistence.
 
 This approval-time check reduces stale-target risk but cannot eliminate the final race between the
 last read and the external side effect. A production billing/refund adapter must still enforce its
