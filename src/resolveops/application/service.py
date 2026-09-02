@@ -12,7 +12,11 @@ from resolveops.domain.errors import (
     NotFoundError,
     PolicyDeniedError,
 )
-from resolveops.domain.execution import apply_execution_result, build_idempotency_key
+from resolveops.domain.execution import (
+    apply_execution_result,
+    begin_execution_attempt,
+    build_idempotency_key,
+)
 from resolveops.domain.models import (
     ActionExecution,
     AnalysisResult,
@@ -86,7 +90,12 @@ class ResolveOpsService:
             event
             for event in events
             if event.entity_id == execution.id
-            and event.event_type in {"action.execution_claimed", "action.execution_updated"}
+            and event.event_type
+            in {
+                "action.execution_claimed",
+                "action.execution_attempt_started",
+                "action.execution_updated",
+            }
         ]
         expected = object_digest(execution.model_dump(mode="json"))
         if not matches or matches[-1].payload.get("execution_hash") != expected:
@@ -140,6 +149,14 @@ class ResolveOpsService:
                 "execution_hash": object_digest(execution.model_dump(mode="json")),
             },
         )
+
+    def _begin_execution_attempt(self, execution: ActionExecution) -> ActionExecution:
+        updated = begin_execution_attempt(execution)
+        self.store.update_execution(
+            updated,
+            audit_event=self._execution_audit(updated, "action.execution_attempt_started"),
+        )
+        return updated
 
     def _persist_execution_result(
         self,
@@ -283,6 +300,7 @@ class ResolveOpsService:
         if execution is None:
             return approval, None
 
+        execution = self._begin_execution_attempt(execution)
         try:
             result = self.action_executor.execute(
                 execution.action,
@@ -314,9 +332,11 @@ class ResolveOpsService:
         if execution is None:
             raise NotFoundError(f"execution not found: {execution_id}")
         self._verify_execution_integrity(execution)
-        approval = self._approved_review_for_execution(execution)
+        self._approved_review_for_execution(execution)
         if execution.state.terminal:
             raise InvalidTransitionError("terminal execution does not require reconciliation")
+
+        execution = self._begin_execution_attempt(execution)
         try:
             result = self.action_executor.reconcile(execution)
         except Exception:
@@ -352,7 +372,12 @@ class ResolveOpsService:
             item
             for item in executions
             if item.state
-            in {ExecutionState.PENDING, ExecutionState.SUBMITTED, ExecutionState.UNKNOWN}
+            in {
+                ExecutionState.PENDING,
+                ExecutionState.IN_FLIGHT,
+                ExecutionState.SUBMITTED,
+                ExecutionState.UNKNOWN,
+            }
         ]
         return {
             "analyses": len(analyses),
