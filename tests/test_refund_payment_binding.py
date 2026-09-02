@@ -21,14 +21,7 @@ from resolveops.domain.models import (
 )
 
 
-def build_service(*payments: PaymentSnapshot) -> tuple[ResolveOpsService, MemoryBillingReader]:
-    billing = MemoryBillingReader(payments)
-    service = ResolveOpsService(
-        store=MemoryStore(),
-        generator=DeterministicResponseGenerator(),
-        action_executor=MockActionExecutor(),
-        billing_reader=billing,
-    )
+def seed_service(service: ResolveOpsService) -> None:
     service.seed_customer(CustomerProfile(id="cust"))
     service.seed_customer(CustomerProfile(id="other"))
     service.seed_article(
@@ -40,6 +33,17 @@ def build_service(*payments: PaymentSnapshot) -> tuple[ResolveOpsService, Memory
             owner="support",
         )
     )
+
+
+def build_service(*payments: PaymentSnapshot) -> tuple[ResolveOpsService, MemoryBillingReader]:
+    billing = MemoryBillingReader(payments)
+    service = ResolveOpsService(
+        store=MemoryStore(),
+        generator=DeterministicResponseGenerator(),
+        action_executor=MockActionExecutor(),
+        billing_reader=billing,
+    )
+    seed_service(service)
     return service, billing
 
 
@@ -96,6 +100,29 @@ def test_unknown_payment_reference_escalates() -> None:
     assert analysis.disposition is Disposition.ESCALATE
     assert analysis.proposed_action is None
     assert "refund_payment_target_not_found" in analysis.disposition_reasons
+
+
+def test_billing_reader_cannot_substitute_a_different_payment_identity() -> None:
+    returned = payment(payment_id="pay_other")
+
+    class MismatchedBillingReader:
+        def get_payment(self, payment_id: str) -> PaymentSnapshot | None:
+            assert payment_id == "pay_1"
+            return returned
+
+    service = ResolveOpsService(
+        store=MemoryStore(),
+        generator=DeterministicResponseGenerator(),
+        action_executor=MockActionExecutor(),
+        billing_reader=MismatchedBillingReader(),
+    )
+    seed_service(service)
+
+    with pytest.raises(IntegrityError, match="mismatched identity"):
+        service.analyze(refund_ticket(payment_reference="pay_1"))
+
+    assert service.store.list_analyses() == []
+    assert service.store.list_executions() == []
 
 
 def test_payment_owned_by_another_customer_is_denied() -> None:
