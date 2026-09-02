@@ -38,9 +38,7 @@ def extract_refund_request(message: str) -> tuple[Decimal | None, str | None]:
     if not matches:
         return None, None
 
-    amounts = {
-        Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches
-    }
+    amounts = {Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches}
     if len(amounts) != 1:
         return None, "usd"
     return next(iter(amounts)), "usd"
