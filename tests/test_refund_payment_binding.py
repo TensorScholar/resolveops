@@ -10,7 +10,7 @@ from resolveops.adapters.generator import DeterministicResponseGenerator
 from resolveops.adapters.memory import MemoryStore
 from resolveops.application.service import ResolveOpsService
 from resolveops.domain.audit import object_digest
-from resolveops.domain.errors import InvalidTransitionError, PolicyDeniedError
+from resolveops.domain.errors import IntegrityError, InvalidTransitionError, PolicyDeniedError
 from resolveops.domain.models import (
     ActionResourceKind,
     CustomerProfile,
@@ -141,6 +141,15 @@ def test_requested_refund_cannot_exceed_remaining_payment_amount() -> None:
     assert "refund_exceeds_remaining_payment_amount" in analysis.disposition_reasons
 
 
+def test_zero_refund_amount_is_denied() -> None:
+    service, _ = build_service(payment())
+    analysis = service.analyze(refund_ticket("Refund $0"))
+
+    assert analysis.disposition is Disposition.DENY
+    assert analysis.proposed_action is None
+    assert "refund_amount_must_be_positive" in analysis.disposition_reasons
+
+
 def test_valid_refund_is_bound_to_exact_payment_snapshot() -> None:
     snapshot = payment(amount="100.00", amount_refunded="20.00")
     service, _ = build_service(snapshot)
@@ -161,9 +170,7 @@ def test_explicit_reference_selects_exact_payment_without_customer_search() -> N
     second = payment(payment_id="pay_b", amount="80.00")
     service, _ = build_service(first, second)
 
-    analysis = service.analyze(
-        refund_ticket("Refund $40", payment_reference="pay_b")
-    )
+    analysis = service.analyze(refund_ticket("Refund $40", payment_reference="pay_b"))
 
     assert analysis.proposed_action is not None
     assert analysis.proposed_action.resource_id == "pay_b"
@@ -200,7 +207,7 @@ def test_payment_disappearing_before_approval_fails_closed() -> None:
     original = payment()
     service, billing = build_service(original)
     analysis = service.analyze(refund_ticket())
-    billing._payments.clear()
+    billing.remove_payment(original.id)
 
     with pytest.raises(PolicyDeniedError, match="no longer available"):
         service.review(analysis.id, reviewer="manager@example.com", approve=True)
@@ -232,7 +239,7 @@ def test_changed_payment_reference_on_same_ticket_id_is_integrity_conflict() -> 
     service.analyze(ticket)
 
     changed = ticket.model_copy(update={"payment_reference": "pay_b"})
-    with pytest.raises(Exception, match="different content"):
+    with pytest.raises(IntegrityError, match="different content"):
         service.analyze(changed)
 
 
