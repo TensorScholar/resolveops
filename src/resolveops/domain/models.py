@@ -188,7 +188,9 @@ class ExecutionResult(StrictModel):
             raise ValueError("pending is reserved for an unattempted local execution claim")
         if self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}:
             if not self.external_reference:
-                raise ValueError("submitted or succeeded provider result requires external reference")
+                raise ValueError(
+                    "submitted or succeeded provider result requires external reference"
+                )
         return self
 
 
