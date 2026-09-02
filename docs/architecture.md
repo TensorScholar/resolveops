@@ -29,6 +29,28 @@ Dependency rules:
 
 ## Transaction boundaries
 
+### Case ingestion
+
+Application ingestion uses the store-level `record_analysis` transition rather than separately
+persisting a ticket, analysis, and audit event. The transition binds one `Ticket.id` to:
+
+- the digest of the exact persisted ticket payload;
+- one canonical `AnalysisResult`;
+- one `ticket.analyzed` audit event.
+
+SQLite stores this relationship in `analysis_claims` and commits the ticket, analysis, claim, and
+audit event under one `BEGIN IMMEDIATE` transaction. An identical replay returns the canonical
+analysis. Reusing the same ticket ID with different content fails closed. Concurrent duplicate
+requests may perform redundant analysis work before persistence, but only one canonical analysis
+can commit and all successful callers converge on that persisted result.
+
+On startup, a legacy database with one analysis for a ticket can receive a claim only when the
+persisted ticket and matching hash-chained `ticket.analyzed` evidence prove that relationship.
+If multiple historical analyses already exist for one ticket, ResolveOps refuses to guess which
+one should become canonical.
+
+### Review and execution
+
 The review transition is atomic at the store boundary. An approved review and its initial
 `pending` execution claim are persisted with their audit events in one transaction. This
 prevents a crash between approval and execution-intent creation from leaving an approved action
