@@ -96,11 +96,7 @@ class SQLiteStore:
                     raw = json.loads(payload)
                 except (json.JSONDecodeError, TypeError):
                     raise
-                if (
-                    isinstance(raw, dict)
-                    and "success" in raw
-                    and "idempotency_key" not in raw
-                ):
+                if isinstance(raw, dict) and "success" in raw and "idempotency_key" not in raw:
                     raise IntegrityError(
                         "legacy execution records use the pre-lifecycle schema; "
                         "automatic migration is unsafe"
