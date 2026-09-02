@@ -21,7 +21,10 @@ def run_demo(database: str | None = None) -> dict[str, object]:
         id="pay_demo_duplicate_charge",
         customer_id="cust_demo",
         amount=Decimal("49.00"),
+        amount_refunded=Decimal("0.00"),
         currency="usd",
+        refundable=True,
+        status="succeeded",
     )
     service = build_service(database, payments=(payment,))
     service.seed_customer(
