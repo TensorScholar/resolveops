@@ -7,4 +7,4 @@ def test_demo() -> None:
     assert result["execution"]["state"] == "succeeded"
     assert result["execution"]["attempt_count"] == 1
     assert result["metrics"]["resolution_rate"] == 1.0
-    assert result["audit_events"] == 5
+    assert result["audit_events"] == 6
