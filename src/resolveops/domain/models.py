@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Annotated
 from uuid import uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 StrictMoney = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=12, decimal_places=2)]
 StrictCost = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=14, decimal_places=6)]
@@ -149,18 +149,47 @@ class ActionExecution(StrictModel):
     idempotency_key: str = Field(min_length=1, max_length=255)
     state: ExecutionState = ExecutionState.PENDING
     attempt_count: int = Field(default=0, ge=0)
-    external_reference: str | None = None
-    provider_status: str | None = None
-    message: str = "Execution claimed; provider outcome not yet recorded."
+    external_reference: str | None = Field(default=None, max_length=512)
+    provider_status: str | None = Field(default=None, max_length=120)
+    message: str = Field(
+        default="Execution claimed; provider outcome not yet recorded.",
+        min_length=1,
+        max_length=2_000,
+    )
     created_at: AwareDatetime = Field(default_factory=utc_now)
     updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> ActionExecution:
+        if self.updated_at < self.created_at:
+            raise ValueError("execution updated_at cannot precede created_at")
+        if self.state is ExecutionState.PENDING:
+            if self.attempt_count != 0:
+                raise ValueError("pending execution cannot have provider attempts")
+            if self.external_reference is not None or self.provider_status is not None:
+                raise ValueError("pending execution cannot have provider result data")
+        elif self.attempt_count == 0:
+            raise ValueError("non-pending execution must have at least one provider attempt")
+        if self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}:
+            if not self.external_reference:
+                raise ValueError("submitted or succeeded execution requires external reference")
+        return self
 
 
 class ExecutionResult(StrictModel):
     state: ExecutionState
-    message: str
-    external_reference: str | None = None
-    provider_status: str | None = None
+    message: str = Field(min_length=1, max_length=2_000)
+    external_reference: str | None = Field(default=None, max_length=512)
+    provider_status: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_provider_result(self) -> ExecutionResult:
+        if self.state is ExecutionState.PENDING:
+            raise ValueError("pending is reserved for an unattempted local execution claim")
+        if self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}:
+            if not self.external_reference:
+                raise ValueError("submitted or succeeded provider result requires external reference")
+        return self
 
 
 class Outcome(StrictModel):
