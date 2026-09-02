@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -69,6 +70,8 @@ class SQLiteStore:
                 );
                 """
             )
+            connection.execute("BEGIN IMMEDIATE")
+            self._validate_and_upgrade_execution_claims(connection)
 
     @staticmethod
     def _decode(payload: str, model_type: type[T], *, label: str) -> T:
@@ -76,6 +79,131 @@ class SQLiteStore:
             return model_type.model_validate_json(payload)
         except (ValidationError, ValueError, TypeError) as exc:
             raise IntegrityError(f"invalid persisted {label} payload") from exc
+
+    def _validate_and_upgrade_execution_claims(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        execution_rows = connection.execute(
+            "SELECT id,payload FROM objects WHERE kind='execution' ORDER BY id"
+        ).fetchall()
+        executions: dict[str, ActionExecution] = {}
+        for object_id, payload in execution_rows:
+            try:
+                execution = self._decode(payload, ActionExecution, label="execution")
+            except IntegrityError as exc:
+                try:
+                    raw = json.loads(payload)
+                except (json.JSONDecodeError, TypeError):
+                    raise
+                if (
+                    isinstance(raw, dict)
+                    and "success" in raw
+                    and "idempotency_key" not in raw
+                ):
+                    raise IntegrityError(
+                        "legacy execution records use the pre-lifecycle schema; "
+                        "automatic migration is unsafe"
+                    ) from exc
+                raise
+            if execution.id != object_id:
+                raise IntegrityError("persisted execution object id does not match its key")
+            executions[execution.id] = execution
+
+        approval_claim_rows = connection.execute(
+            "SELECT analysis_id,approval_id FROM approval_claims ORDER BY analysis_id"
+        ).fetchall()
+        approvals: dict[str, Approval] = {}
+        approval_by_analysis: dict[str, Approval] = {}
+        for analysis_id, approval_id in approval_claim_rows:
+            row = connection.execute(
+                "SELECT payload FROM objects WHERE kind='approval' AND id=?",
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                raise IntegrityError("approval claim references a missing approval")
+            approval = self._decode(row[0], Approval, label="approval")
+            if approval.id != approval_id or approval.analysis_id != analysis_id:
+                raise IntegrityError("approval claim does not match persisted approval")
+            approvals[approval.id] = approval
+            approval_by_analysis[analysis_id] = approval
+
+        execution_claim_rows = connection.execute(
+            """
+            SELECT analysis_id,approval_id,execution_id
+            FROM execution_claims
+            ORDER BY analysis_id
+            """
+        ).fetchall()
+        claims_by_analysis: dict[str, tuple[str, str]] = {}
+        claims_by_approval: dict[str, tuple[str, str]] = {}
+        claims_by_execution: dict[str, tuple[str, str]] = {}
+        for analysis_id, approval_id, execution_id in execution_claim_rows:
+            execution = executions.get(execution_id)
+            approval = approvals.get(approval_id)
+            if execution is None:
+                raise IntegrityError("execution claim references a missing execution")
+            if approval is None or approval.state is not ReviewState.APPROVED:
+                raise IntegrityError("execution claim lacks a matching approved review")
+            if (
+                execution.analysis_id != analysis_id
+                or execution.approval_id != approval_id
+                or approval.analysis_id != analysis_id
+            ):
+                raise IntegrityError("execution claim does not match persisted execution")
+            claims_by_analysis[analysis_id] = (approval_id, execution_id)
+            claims_by_approval[approval_id] = (analysis_id, execution_id)
+            claims_by_execution[execution_id] = (analysis_id, approval_id)
+
+        for execution in executions.values():
+            approval = approvals.get(execution.approval_id)
+            if (
+                approval is None
+                or approval.analysis_id != execution.analysis_id
+                or approval.state is not ReviewState.APPROVED
+            ):
+                raise IntegrityError("persisted execution lacks its approved review claim")
+
+            existing = claims_by_execution.get(execution.id)
+            if existing is not None:
+                if existing != (execution.analysis_id, execution.approval_id):
+                    raise IntegrityError("execution claim conflicts with persisted execution")
+                continue
+            if (
+                execution.analysis_id in claims_by_analysis
+                or execution.approval_id in claims_by_approval
+            ):
+                raise IntegrityError("execution claim conflicts with persisted review")
+
+            connection.execute(
+                """
+                INSERT INTO execution_claims(analysis_id,approval_id,execution_id)
+                VALUES(?,?,?)
+                """,
+                (execution.analysis_id, execution.approval_id, execution.id),
+            )
+            claims_by_analysis[execution.analysis_id] = (
+                execution.approval_id,
+                execution.id,
+            )
+            claims_by_approval[execution.approval_id] = (
+                execution.analysis_id,
+                execution.id,
+            )
+            claims_by_execution[execution.id] = (
+                execution.analysis_id,
+                execution.approval_id,
+            )
+
+        for analysis_id, approval in approval_by_analysis.items():
+            execution_claim = claims_by_analysis.get(analysis_id)
+            if approval.state is ReviewState.APPROVED and execution_claim is None:
+                raise IntegrityError(
+                    "approved legacy review has no persisted execution; "
+                    "external side-effect state is ambiguous"
+                )
+            if approval.state is ReviewState.REJECTED and execution_claim is not None:
+                raise IntegrityError("rejected review cannot own an execution claim")
 
     def _put(self, kind: str, identifier: str, model: BaseModel) -> None:
         with closing(self._connect()) as connection, connection:
