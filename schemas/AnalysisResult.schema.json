@@ -29,6 +29,19 @@
           "default": null,
           "title": "Amount"
         },
+        "currency": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{3}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
         "kind": {
           "$ref": "#/$defs/ActionKind"
         },
@@ -36,9 +49,26 @@
           "title": "Reason",
           "type": "string"
         },
+        "resource_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource Hash"
+        },
         "resource_id": {
           "title": "Resource Id",
           "type": "string"
+        },
+        "resource_kind": {
+          "$ref": "#/$defs/ActionResourceKind",
+          "default": "customer"
         },
         "target_plan": {
           "anyOf": [
@@ -60,6 +90,14 @@
       ],
       "title": "ActionProposal",
       "type": "object"
+    },
+    "ActionResourceKind": {
+      "enum": [
+        "customer",
+        "payment"
+      ],
+      "title": "ActionResourceKind",
+      "type": "string"
     },
     "Citation": {
       "additionalProperties": false,
