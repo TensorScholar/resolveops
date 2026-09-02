@@ -39,11 +39,15 @@ from amount/date similarity.
 
 `BillingReader.get_payment(payment_id)` is deliberately the only billing lookup contract in this
 slice. It returns a normalized `PaymentSnapshot` containing the exact payment identity, owner,
-original amount, already-refunded amount, currency, refundability, and provider status.
+original amount, already-refunded amount, currency, refundability, and provider status. A reader
+must return either the payment whose `id` exactly equals the requested `payment_id` or `None`;
+returning a different payment is an integrity violation and ResolveOps fails the ingestion before
+persisting an analysis.
 
 Before a refund action can be proposed, ResolveOps verifies:
 
 - the explicit payment exists;
+- the returned payment identity exactly matches the explicit payment reference;
 - the payment belongs to the ticket customer;
 - the payment is still refundable and has a positive remaining refundable amount;
 - an explicitly stated refund currency matches the payment currency;
