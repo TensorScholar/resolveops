@@ -9,6 +9,7 @@ from resolveops.domain.models import (
     ActionProposal,
     AnalysisResult,
     Approval,
+    AuditEventDraft,
     CustomerProfile,
     Disposition,
     IntentKind,
@@ -55,8 +56,7 @@ def test_all_sqlite_object_types(tmp_path) -> None:
         analysis_id="a",
         approval_id="p",
         action=analysis.proposed_action,
-        success=True,
-        message="ok",
+        idempotency_key="ro_sqlite_full",
     )
     event = make_event(
         sequence=1,
@@ -70,14 +70,31 @@ def test_all_sqlite_object_types(tmp_path) -> None:
     store.put_ticket(ticket)
     store.put_article(article)
     store.put_analysis(analysis)
-    store.put_approval(approval)
-    store.put_execution(execution)
     store.append_audit(event)
+    review_events = store.record_review(
+        approval,
+        execution,
+        audit_events=(
+            AuditEventDraft(
+                event_type="analysis.reviewed",
+                entity_id=approval.id,
+                payload={"analysis_id": analysis.id},
+            ),
+            AuditEventDraft(
+                event_type="action.execution_claimed",
+                entity_id=execution.id,
+                payload={"analysis_id": analysis.id},
+            ),
+        ),
+    )
 
     assert store.get_analysis("a") == analysis
     assert store.list_analyses() == [analysis]
     assert store.get_approval("p") == approval
+    assert store.get_execution("e") == execution
+    assert store.get_execution_for_analysis("a") == execution
     assert store.list_executions() == [execution]
     assert store.list_articles() == [article]
-    assert store.list_audit() == [event]
+    assert store.list_audit()[0] == event
+    assert tuple(store.list_audit()[1:]) == review_events
     assert store.get_analysis("missing") is None
