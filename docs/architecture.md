@@ -44,10 +44,20 @@ analysis. Reusing the same ticket ID with different content fails closed. Concur
 requests may perform redundant analysis work before persistence, but only one canonical analysis
 can commit and all successful callers converge on that persisted result.
 
-On startup, a legacy database with one analysis for a ticket can receive a claim only when the
-persisted ticket and matching hash-chained `ticket.analyzed` evidence prove that relationship.
-If multiple historical analyses already exist for one ticket, ResolveOps refuses to guess which
-one should become canonical.
+Concrete adapter helper writes are not part of the application `Store` contract. They are also
+prevented from mutating a ticket or analysis once that ticket owns a canonical analysis claim, so
+low-level fixture/setup access cannot silently invalidate canonical ownership after ingestion.
+
+On startup, a database missing an analysis claim can receive one only when hash-chained
+`ticket.analyzed` evidence already binds both the exact persisted ticket digest and the exact
+analysis digest. Historical events that predate ticket-payload binding are rejected rather than
+guessed into the new canonical model. Multiple historical analyses for one ticket are likewise
+rejected because no safe canonical choice can be inferred.
+
+An exact replay is retrieval of the already-created resolution transaction. It therefore does
+not regenerate the analysis from mutable customer-profile state. Mutable upstream case revisions,
+identity/authorization checks, and new resolution decisions require explicit integration
+contracts rather than changing the semantics of an idempotent replay.
 
 ### Review and execution
 
