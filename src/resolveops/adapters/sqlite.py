@@ -135,16 +135,16 @@ class SQLiteStore:
         claims_by_approval: dict[str, tuple[str, str]] = {}
         claims_by_execution: dict[str, tuple[str, str]] = {}
         for analysis_id, approval_id, execution_id in execution_claim_rows:
-            execution = executions.get(execution_id)
-            approval = approvals.get(approval_id)
-            if execution is None:
+            claimed_execution = executions.get(execution_id)
+            claimed_approval = approvals.get(approval_id)
+            if claimed_execution is None:
                 raise IntegrityError("execution claim references a missing execution")
-            if approval is None or approval.state is not ReviewState.APPROVED:
+            if claimed_approval is None or claimed_approval.state is not ReviewState.APPROVED:
                 raise IntegrityError("execution claim lacks a matching approved review")
             if (
-                execution.analysis_id != analysis_id
-                or execution.approval_id != approval_id
-                or approval.analysis_id != analysis_id
+                claimed_execution.analysis_id != analysis_id
+                or claimed_execution.approval_id != approval_id
+                or claimed_approval.analysis_id != analysis_id
             ):
                 raise IntegrityError("execution claim does not match persisted execution")
             claims_by_analysis[analysis_id] = (approval_id, execution_id)
@@ -152,11 +152,11 @@ class SQLiteStore:
             claims_by_execution[execution_id] = (analysis_id, approval_id)
 
         for execution in executions.values():
-            approval = approvals.get(execution.approval_id)
+            execution_approval = approvals.get(execution.approval_id)
             if (
-                approval is None
-                or approval.analysis_id != execution.analysis_id
-                or approval.state is not ReviewState.APPROVED
+                execution_approval is None
+                or execution_approval.analysis_id != execution.analysis_id
+                or execution_approval.state is not ReviewState.APPROVED
             ):
                 raise IntegrityError("persisted execution lacks its approved review claim")
 
