@@ -165,10 +165,12 @@ class SQLiteStore:
             if (
                 len(matches) != 1
                 or matches[0].payload.get("ticket_id") != ticket_id
+                or matches[0].payload.get("ticket_hash") != ticket_hash
                 or matches[0].payload.get("analysis_hash") != analysis_hash
             ):
                 raise IntegrityError(
-                    "legacy analysis cannot be canonically claimed without matching audit evidence"
+                    "legacy analysis cannot be canonically claimed without exact "
+                    "ticket and analysis audit evidence"
                 )
 
             connection.execute(
@@ -389,7 +391,30 @@ class SQLiteStore:
             raise IntegrityError("execution claim does not match approved review")
 
     def put_ticket(self, ticket: Ticket) -> None:
-        self._put("ticket", ticket.id, ticket)
+        incoming_hash = object_digest(ticket.model_dump(mode="json"))
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            claim = connection.execute(
+                "SELECT ticket_hash FROM analysis_claims WHERE ticket_id=?",
+                (ticket.id,),
+            ).fetchone()
+            if claim is not None:
+                if claim[0] != incoming_hash:
+                    raise IntegrityError("canonical ticket cannot be overwritten")
+                row = connection.execute(
+                    "SELECT payload FROM objects WHERE kind='ticket' AND id=?",
+                    (ticket.id,),
+                ).fetchone()
+                if row is None:
+                    raise IntegrityError("analysis claim references a missing ticket")
+                existing = self._decode(row[0], Ticket, label="ticket")
+                if object_digest(existing.model_dump(mode="json")) != incoming_hash:
+                    raise IntegrityError("analysis claim ticket hash is inconsistent")
+                return
+            connection.execute(
+                "INSERT OR REPLACE INTO objects(kind,id,payload) VALUES('ticket',?,?)",
+                (ticket.id, ticket.model_dump_json()),
+            )
 
     def get_ticket(self, ticket_id: str) -> Ticket | None:
         return self._get("ticket", ticket_id, Ticket)
@@ -407,7 +432,36 @@ class SQLiteStore:
         return self._list("article", KnowledgeArticle)
 
     def put_analysis(self, analysis: AnalysisResult) -> None:
-        self._put("analysis", analysis.id, analysis)
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            claim = connection.execute(
+                "SELECT analysis_id FROM analysis_claims WHERE ticket_id=?",
+                (analysis.ticket_id,),
+            ).fetchone()
+            if claim is not None:
+                if claim[0] != analysis.id:
+                    raise IntegrityError("canonical analysis cannot be overwritten")
+                row = connection.execute(
+                    "SELECT payload FROM objects WHERE kind='analysis' AND id=?",
+                    (analysis.id,),
+                ).fetchone()
+                if row is None:
+                    raise IntegrityError("analysis claim references a missing analysis")
+                if self._decode(row[0], AnalysisResult, label="analysis") != analysis:
+                    raise IntegrityError("canonical analysis cannot be overwritten")
+                return
+            row = connection.execute(
+                "SELECT payload FROM objects WHERE kind='analysis' AND id=?",
+                (analysis.id,),
+            ).fetchone()
+            if row is not None:
+                if self._decode(row[0], AnalysisResult, label="analysis") != analysis:
+                    raise IntegrityError("analysis id is already in use")
+                return
+            connection.execute(
+                "INSERT INTO objects(kind,id,payload) VALUES('analysis',?,?)",
+                (analysis.id, analysis.model_dump_json()),
+            )
 
     def record_analysis(
         self,
