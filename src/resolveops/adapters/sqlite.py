@@ -10,15 +10,18 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from resolveops.domain.audit import make_event
-from resolveops.domain.errors import IntegrityError, InvalidTransitionError
+from resolveops.domain.errors import IntegrityError, InvalidTransitionError, NotFoundError
+from resolveops.domain.execution import validate_execution_update
 from resolveops.domain.models import (
     ActionExecution,
     AnalysisResult,
     Approval,
     AuditEvent,
+    AuditEventDraft,
     CustomerProfile,
     KnowledgeArticle,
     Outcome,
+    ReviewState,
     Ticket,
 )
 
@@ -59,6 +62,11 @@ class SQLiteStore:
                     analysis_id TEXT PRIMARY KEY,
                     approval_id TEXT UNIQUE NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS execution_claims (
+                    analysis_id TEXT PRIMARY KEY,
+                    approval_id TEXT UNIQUE NOT NULL,
+                    execution_id TEXT UNIQUE NOT NULL
+                );
                 """
             )
 
@@ -90,6 +98,56 @@ class SQLiteStore:
             ).fetchall()
         return [self._decode(row[0], model_type, label=kind) for row in rows]
 
+    def _append_draft(
+        self,
+        connection: sqlite3.Connection,
+        draft: AuditEventDraft,
+    ) -> AuditEvent:
+        row = connection.execute(
+            "SELECT payload FROM audit_events ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            latest = self._decode(row[0], AuditEvent, label="audit event")
+            sequence = latest.sequence + 1
+            previous_hash = latest.event_hash
+        else:
+            sequence = 1
+            previous_hash = "0" * 64
+        event = make_event(
+            sequence=sequence,
+            event_type=draft.event_type,
+            entity_id=draft.entity_id,
+            payload=draft.payload,
+            previous_hash=previous_hash,
+        )
+        connection.execute(
+            "INSERT INTO audit_events(sequence,payload) VALUES(?,?)",
+            (event.sequence, event.model_dump_json()),
+        )
+        return event
+
+    @staticmethod
+    def _validate_review_transition(
+        approval: Approval,
+        execution: ActionExecution | None,
+        audit_events: tuple[AuditEventDraft, ...],
+    ) -> None:
+        expected_events = 2 if execution is not None else 1
+        if len(audit_events) != expected_events:
+            raise IntegrityError("review transition has inconsistent audit evidence")
+        if execution is None:
+            if approval.state is ReviewState.APPROVED:
+                raise IntegrityError("approved action review must claim an execution")
+            return
+        if approval.state is not ReviewState.APPROVED:
+            raise IntegrityError("rejected review cannot claim an execution")
+        if (
+            execution.approval_id != approval.id
+            or execution.analysis_id != approval.analysis_id
+            or execution.attempt_count != 0
+        ):
+            raise IntegrityError("execution claim does not match approved review")
+
     def put_ticket(self, ticket: Ticket) -> None:
         self._put("ticket", ticket.id, ticket)
 
@@ -117,7 +175,14 @@ class SQLiteStore:
     def list_analyses(self) -> list[AnalysisResult]:
         return self._list("analysis", AnalysisResult)
 
-    def put_approval(self, approval: Approval) -> None:
+    def record_review(
+        self,
+        approval: Approval,
+        execution: ActionExecution | None,
+        *,
+        audit_events: tuple[AuditEventDraft, ...],
+    ) -> tuple[AuditEvent, ...]:
+        self._validate_review_transition(approval, execution, audit_events)
         try:
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -129,14 +194,61 @@ class SQLiteStore:
                     "INSERT INTO objects(kind,id,payload) VALUES('approval',?,?)",
                     (approval.id, approval.model_dump_json()),
                 )
+                if execution is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO execution_claims(analysis_id,approval_id,execution_id)
+                        VALUES(?,?,?)
+                        """,
+                        (execution.analysis_id, execution.approval_id, execution.id),
+                    )
+                    connection.execute(
+                        "INSERT INTO objects(kind,id,payload) VALUES('execution',?,?)",
+                        (execution.id, execution.model_dump_json()),
+                    )
+                return tuple(self._append_draft(connection, draft) for draft in audit_events)
         except sqlite3.IntegrityError as exc:
             raise InvalidTransitionError("analysis has already been reviewed") from exc
 
     def get_approval(self, approval_id: str) -> Approval | None:
         return self._get("approval", approval_id, Approval)
 
-    def put_execution(self, execution: ActionExecution) -> None:
-        self._put("execution", execution.id, execution)
+    def get_execution(self, execution_id: str) -> ActionExecution | None:
+        return self._get("execution", execution_id, ActionExecution)
+
+    def get_execution_for_analysis(self, analysis_id: str) -> ActionExecution | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT execution_id FROM execution_claims WHERE analysis_id=?",
+                (analysis_id,),
+            ).fetchone()
+        return self.get_execution(row[0]) if row else None
+
+    def update_execution(
+        self,
+        execution: ActionExecution,
+        *,
+        audit_event: AuditEventDraft,
+    ) -> AuditEvent:
+        if audit_event.entity_id != execution.id:
+            raise IntegrityError("execution audit event targets the wrong entity")
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload FROM objects WHERE kind='execution' AND id=?",
+                (execution.id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"execution not found: {execution.id}")
+            current = self._decode(row[0], ActionExecution, label="execution")
+            validate_execution_update(current, execution)
+            cursor = connection.execute(
+                "UPDATE objects SET payload=? WHERE kind='execution' AND id=?",
+                (execution.model_dump_json(), execution.id),
+            )
+            if cursor.rowcount != 1:
+                raise IntegrityError("execution update was not persisted")
+            return self._append_draft(connection, audit_event)
 
     def list_executions(self) -> list[ActionExecution]:
         return self._list("execution", ActionExecution)
@@ -168,28 +280,14 @@ class SQLiteStore:
     ) -> AuditEvent:
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT payload FROM audit_events ORDER BY sequence DESC LIMIT 1"
-            ).fetchone()
-            if row:
-                latest = self._decode(row[0], AuditEvent, label="audit event")
-                sequence = latest.sequence + 1
-                previous_hash = latest.event_hash
-            else:
-                sequence = 1
-                previous_hash = "0" * 64
-            event = make_event(
-                sequence=sequence,
-                event_type=event_type,
-                entity_id=entity_id,
-                payload=payload,
-                previous_hash=previous_hash,
+            return self._append_draft(
+                connection,
+                AuditEventDraft(
+                    event_type=event_type,
+                    entity_id=entity_id,
+                    payload=payload,
+                ),
             )
-            connection.execute(
-                "INSERT INTO audit_events(sequence,payload) VALUES(?,?)",
-                (event.sequence, event.model_dump_json()),
-            )
-            return event
 
     def list_audit(self) -> list[AuditEvent]:
         with closing(self._connect()) as connection, connection:

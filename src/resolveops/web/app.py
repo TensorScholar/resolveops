@@ -8,7 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from resolveops._version import __version__
 from resolveops.bootstrap import build_service
-from resolveops.domain.errors import InvalidTransitionError, NotFoundError, PolicyDeniedError
+from resolveops.domain.errors import (
+    IntegrityError,
+    InvalidTransitionError,
+    NotFoundError,
+    PolicyDeniedError,
+)
 from resolveops.domain.models import CustomerProfile, KnowledgeArticle, Outcome, Ticket
 
 
@@ -32,7 +37,7 @@ def create_app(database: str | Path = "resolveops.db") -> object:
     def domain_error(exc: Exception) -> HTTPException:
         if isinstance(exc, NotFoundError):
             return HTTPException(status_code=404, detail=str(exc))
-        if isinstance(exc, (InvalidTransitionError, PolicyDeniedError)):
+        if isinstance(exc, (IntegrityError, InvalidTransitionError, PolicyDeniedError)):
             return HTTPException(status_code=409, detail=str(exc))
         return HTTPException(status_code=400, detail="Request could not be processed.")
 
@@ -54,7 +59,7 @@ def create_app(database: str | Path = "resolveops.db") -> object:
     def analyze(ticket: Ticket) -> dict[str, object]:
         try:
             return service.analyze(ticket).model_dump(mode="json")
-        except (NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+        except (IntegrityError, NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
             raise domain_error(exc) from exc
 
     @app.post("/analyses/{analysis_id}/approve")
@@ -66,18 +71,32 @@ def create_app(database: str | Path = "resolveops.db") -> object:
                 approve=request.approve,
                 note=request.note,
             )
-        except (NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+        except (IntegrityError, NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
             raise domain_error(exc) from exc
         return {
             "approval": approval.model_dump(mode="json"),
             "execution": execution.model_dump(mode="json") if execution else None,
         }
 
+    @app.get("/analyses/{analysis_id}/execution")
+    def execution_for_analysis(analysis_id: str) -> dict[str, object]:
+        try:
+            return service.get_execution_for_analysis(analysis_id).model_dump(mode="json")
+        except (IntegrityError, NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+            raise domain_error(exc) from exc
+
+    @app.post("/executions/{execution_id}/reconcile")
+    def reconcile(execution_id: str) -> dict[str, object]:
+        try:
+            return service.reconcile_execution(execution_id).model_dump(mode="json")
+        except (IntegrityError, NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+            raise domain_error(exc) from exc
+
     @app.post("/outcomes")
     def outcome(item: Outcome) -> dict[str, str]:
         try:
             service.record_outcome(item)
-        except (NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
+        except (IntegrityError, NotFoundError, InvalidTransitionError, PolicyDeniedError) as exc:
             raise domain_error(exc) from exc
         return {"status": "recorded"}
 

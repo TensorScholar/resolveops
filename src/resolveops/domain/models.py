@@ -56,6 +56,18 @@ class ReviewState(StrEnum):
     REJECTED = "rejected"
 
 
+class ExecutionState(StrEnum):
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+    @property
+    def terminal(self) -> bool:
+        return self in {ExecutionState.SUCCEEDED, ExecutionState.FAILED}
+
+
 class Ticket(StrictModel):
     id: str = Field(default_factory=lambda: f"tkt_{uuid4().hex}")
     customer_id: str
@@ -134,10 +146,21 @@ class ActionExecution(StrictModel):
     analysis_id: str
     approval_id: str
     action: ActionProposal
-    success: bool
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    state: ExecutionState = ExecutionState.PENDING
+    attempt_count: int = Field(default=0, ge=0)
     external_reference: str | None = None
+    provider_status: str | None = None
+    message: str = "Execution claimed; provider outcome not yet recorded."
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ExecutionResult(StrictModel):
+    state: ExecutionState
     message: str
-    executed_at: AwareDatetime = Field(default_factory=utc_now)
+    external_reference: str | None = None
+    provider_status: str | None = None
 
 
 class Outcome(StrictModel):
@@ -164,6 +187,12 @@ class PolicyDecision(StrictModel):
     disposition: Disposition
     reasons: tuple[str, ...]
     action_allowed: bool
+
+
+class AuditEventDraft(StrictModel):
+    event_type: str = Field(min_length=1, max_length=120)
+    entity_id: str = Field(min_length=1, max_length=320)
+    payload: dict[str, object]
 
 
 class AuditEvent(StrictModel):

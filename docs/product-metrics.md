@@ -1,17 +1,25 @@
 # Product metrics
 
-ResolveOps measures outcomes, not message volume.
+ResolveOps measures support outcomes and action integrity, not message volume.
 
-Core metrics:
+Core product metrics:
 
-- resolution rate;
-- review rate;
-- evidence coverage;
-- action success rate;
-- cost per resolved outcome;
-- human minutes per resolved outcome;
-- citation recall on a labeled fixture;
-- unsafe action rate.
+- resolution success after action;
+- escalation rate;
+- human-review rate;
+- unresolved-after-action rate;
+- external action definitive failure rate;
+- external action unknown/ambiguous rate;
+- executions requiring reconciliation;
+- reconciliation lag;
+- stale-evidence rejection count;
+- repeat-contact proxy;
+- time to resolution;
+- cost per successful resolution.
 
-Synthetic demo metrics must be labeled synthetic. Real customer claims require an external
-pilot and a documented dataset.
+The reference implementation currently exposes only the subset it can define from retained
+local data: resolution rate, review rate, evidence coverage, terminal action success/failure
+rates, unknown-action rate, actions requiring reconciliation, and cost per resolved outcome.
+
+A metric is not an improvement claim without a baseline. Synthetic fixtures must be labeled
+synthetic; self-authored evaluations are not independent product validation.

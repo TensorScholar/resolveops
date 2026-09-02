@@ -1,8 +1,10 @@
 from resolveops.adapters.actions import MockActionExecutor
 from resolveops.domain.models import (
+    ActionExecution,
     ActionKind,
     ActionProposal,
     Approval,
+    ExecutionState,
     ReviewState,
 )
 
@@ -16,21 +18,22 @@ def approval(state: ReviewState) -> Approval:
 
 
 def test_executor_rejects_unapproved() -> None:
-    ok, message, reference = MockActionExecutor().execute(
+    result = MockActionExecutor().execute(
         ActionProposal(
             kind=ActionKind.CANCELLATION,
             resource_id="c",
             reason="test",
         ),
         approval=approval(ReviewState.REJECTED),
+        idempotency_key="ro_rejected",
     )
-    assert not ok
-    assert reference is None
-    assert "requires" in message
+    assert result.state is ExecutionState.FAILED
+    assert result.external_reference is None
+    assert "requires" in result.message
 
 
 def test_executor_plan_change() -> None:
-    ok, _, reference = MockActionExecutor().execute(
+    result = MockActionExecutor().execute(
         ActionProposal(
             kind=ActionKind.PLAN_CHANGE,
             resource_id="c",
@@ -38,38 +41,67 @@ def test_executor_plan_change() -> None:
             reason="test",
         ),
         approval=approval(ReviewState.APPROVED),
+        idempotency_key="ro_plan_change",
     )
-    assert ok and reference and reference.startswith("plan_")
+    assert result.state is ExecutionState.SUCCEEDED
+    assert result.external_reference and result.external_reference.startswith("plan_")
 
 
 def test_executor_cancel() -> None:
-    ok, _, reference = MockActionExecutor().execute(
+    result = MockActionExecutor().execute(
         ActionProposal(
             kind=ActionKind.CANCELLATION,
             resource_id="c",
             reason="test",
         ),
         approval=approval(ReviewState.APPROVED),
+        idempotency_key="ro_cancel",
     )
-    assert ok and reference and reference.startswith("cancel_")
+    assert result.state is ExecutionState.SUCCEEDED
+    assert result.external_reference and result.external_reference.startswith("cancel_")
 
 
 def test_executor_rejects_ambiguous_actions() -> None:
-    refund_ok, _, refund_reference = MockActionExecutor().execute(
+    refund = MockActionExecutor().execute(
         ActionProposal(
             kind=ActionKind.REFUND,
             resource_id="c",
             reason="test",
         ),
         approval=approval(ReviewState.APPROVED),
+        idempotency_key="ro_refund",
     )
-    plan_ok, _, plan_reference = MockActionExecutor().execute(
+    plan = MockActionExecutor().execute(
         ActionProposal(
             kind=ActionKind.PLAN_CHANGE,
             resource_id="c",
             reason="test",
         ),
         approval=approval(ReviewState.APPROVED),
+        idempotency_key="ro_plan",
     )
-    assert not refund_ok and refund_reference is None
-    assert not plan_ok and plan_reference is None
+    assert refund.state is ExecutionState.FAILED and refund.external_reference is None
+    assert plan.state is ExecutionState.FAILED and plan.external_reference is None
+
+
+def test_mock_reconciliation_reuses_stable_idempotency_key() -> None:
+    action = ActionProposal(
+        kind=ActionKind.REFUND,
+        resource_id="c",
+        amount=10,
+        reason="test",
+    )
+    approved = approval(ReviewState.APPROVED)
+    first = MockActionExecutor().execute(
+        action,
+        approval=approved,
+        idempotency_key="ro_stable",
+    )
+    pending = ActionExecution(
+        analysis_id=approved.analysis_id,
+        approval_id=approved.id,
+        action=action,
+        idempotency_key="ro_stable",
+    )
+    reconciled = MockActionExecutor().reconcile(pending)
+    assert first.external_reference == reconciled.external_reference
