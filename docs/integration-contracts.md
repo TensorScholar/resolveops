@@ -9,12 +9,24 @@ The ingestion contract is deliberately strict:
 
 - an exact replay of the same `Ticket.id` and serialized ticket content is idempotent and returns
   the existing canonical analysis;
+- that replay is retrieval of the already-created resolution transaction; it does not regenerate
+  the analysis from mutable customer-profile state;
 - the same `Ticket.id` with different content is an integrity conflict and is rejected rather
   than silently treated as a revision;
 - an integration whose source cases are mutable must provide a distinct immutable event/version
   identity, or define a future explicit revision contract before those updates are ingested;
 - connector retries must preserve the source ticket identity rather than minting a new ID for
-  the same logical delivery.
+  the same logical delivery;
+- authentication, authorization, and mutable upstream customer/case validation remain integration
+  responsibilities and must not be implemented by changing canonical replay semantics.
+
+Concrete store helpers used by tests or local setup are outside the application `Store` port and
+cannot rewrite a ticket or analysis after canonical ownership has been established.
+
+A database without an analysis claim is upgraded only when existing hash-chained audit evidence
+already binds both the exact ticket payload digest and exact analysis digest. Older audit history
+without `ticket_hash` is intentionally rejected because ResolveOps cannot prove which historical
+payload produced the analysis.
 
 This is case-level canonicalization inside ResolveOps. It is not generic cross-system entity
 matching and does not establish idempotency for a later external refund/change/cancellation.
