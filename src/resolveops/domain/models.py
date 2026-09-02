@@ -98,10 +98,10 @@ class PaymentSnapshot(StrictModel):
     id: str = Field(min_length=1, max_length=320)
     customer_id: str = Field(min_length=1, max_length=320)
     amount: StrictMoney
-    amount_refunded: StrictMoney = Decimal("0")
+    amount_refunded: StrictMoney
     currency: CurrencyCode
-    refundable: bool = True
-    status: str = Field(default="succeeded", min_length=1, max_length=120)
+    refundable: bool
+    status: str = Field(min_length=1, max_length=120)
 
     @model_validator(mode="after")
     def validate_refund_totals(self) -> PaymentSnapshot:
