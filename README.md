@@ -13,7 +13,7 @@ support case + customer context + approved evidence
                     ↓
           deterministic business policy
                     ↓
-            explicit action proposal
+ explicit verified-resource action proposal
                     ↓
              human review if required
                     ↓
@@ -37,7 +37,7 @@ starts when a high-impact action is approved but the provider response is delaye
 retried, or lost. A support team still needs to answer:
 
 - Which evidence and policy justified this action?
-- What exact action was approved?
+- What exact external resource and action were approved?
 - Was an external side effect already attempted?
 - Can a retry duplicate the customer impact?
 - Does the provider confirm a terminal outcome?
@@ -54,7 +54,11 @@ agent traces.
   boundary;
 - visible evidence provenance with freshness, approval, and content-integrity checks;
 - deterministic business policy separated from response generation;
-- explicit refund, plan-change, and cancellation proposals;
+- refund proposals bound to one explicit billing-system payment identity and normalized payment
+  snapshot digest rather than to a customer or heuristically selected charge;
+- ownership, currency, refundability, and remaining-refundable checks before a refund proposal is
+  reviewable, plus payment-state revalidation at approval time;
+- explicit plan-change and cancellation proposals;
 - mandatory human review for destructive actions in the current development line;
 - one atomic review transition that also claims the approved execution intent;
 - stable, non-sensitive idempotency keys for external action attempts;
@@ -67,10 +71,12 @@ agent traces.
 - SQLite and in-memory persistence;
 - support-outcome and execution-integrity metrics;
 - CLI workflows and an optional FastAPI adapter;
-- ports that keep vendor execution and AgentGuard-style runtime authorization outside the domain.
+- ports that keep vendor billing/execution and AgentGuard-style runtime authorization outside the
+  domain.
 
 The default implementation remains offline and deterministic. It requires no API key and has no
-hidden LLM dependency.
+hidden LLM dependency. `MemoryBillingReader` is a local/test reference adapter, not a live billing
+integration.
 
 ## Quick start
 
@@ -113,6 +119,10 @@ High-impact actions are deliberately constrained:
   new resolution transaction;
 - model output cannot override deterministic business policy;
 - stale, revoked, future-dated, or mutated evidence fails closed for approval;
+- a refund requires an explicit payment reference and cannot be targeted by customer-level or
+  latest-payment heuristics;
+- refund ownership, current normalized payment state, currency, and remaining refundable amount
+  are checked before approval/execution;
 - ambiguous action parameters fail closed;
 - destructive actions require explicit human review in the current development line;
 - approval and execution intent are persisted together so a process crash cannot lose the
@@ -124,8 +134,8 @@ High-impact actions are deliberately constrained:
 - analysis, approval, and execution records are bound into the hash-chained audit log.
 
 This is not a complete production security boundary. Authentication, tenant isolation,
-credential handling, provider-specific idempotency guarantees, webhook authenticity, and
-runtime authorization belong to deployment/integration boundaries.
+credential handling, provider-specific idempotency/current-state guarantees, webhook
+authenticity, and runtime authorization belong to deployment/integration boundaries.
 
 See [Security model](docs/security-model.md) and [Limitations](docs/limitations.md).
 
@@ -149,7 +159,7 @@ ResolveOps owns:
 - support-case identity and canonical analysis ingestion;
 - support-case evidence assembly and applicability;
 - support-specific deterministic policy;
-- explicit action proposals and human review;
+- explicit resource-bound action proposals and human review;
 - support workflow state transitions;
 - execution intent, idempotency, reconciliation, and post-action verification;
 - support outcome measurement and auditability.
@@ -164,7 +174,8 @@ ResolveOps does **not** own:
 - a help-desk, CRM, billing ledger, or identity system of record;
 - a broad connector marketplace.
 
-The next integration target is deliberately one narrow refund path, not a connector catalog.
+The next integration target is deliberately one narrow **live refund adapter** behind the
+payment-binding and execution contracts, not a connector catalog.
 
 ## Documentation
 
