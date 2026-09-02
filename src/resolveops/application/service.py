@@ -66,9 +66,18 @@ class ResolveOpsService:
             for event in events
             if event.event_type == "ticket.analyzed" and event.entity_id == analysis.id
         ]
-        expected = object_digest(analysis.model_dump(mode="json"))
-        if len(matches) != 1 or matches[0].payload.get("analysis_hash") != expected:
-            raise IntegrityError("analysis record does not match its audit evidence")
+        ticket = self.store.get_ticket(analysis.ticket_id)
+        if ticket is None:
+            raise IntegrityError("analysis references a missing persisted ticket")
+        expected_analysis_hash = object_digest(analysis.model_dump(mode="json"))
+        expected_ticket_hash = object_digest(ticket.model_dump(mode="json"))
+        if (
+            len(matches) != 1
+            or matches[0].payload.get("ticket_id") != ticket.id
+            or matches[0].payload.get("ticket_hash") != expected_ticket_hash
+            or matches[0].payload.get("analysis_hash") != expected_analysis_hash
+        ):
+            raise IntegrityError("analysis or ticket record does not match its audit evidence")
         return events
 
     def _verify_approval_integrity(self, approval: Approval) -> None:
