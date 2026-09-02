@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from resolveops.domain.models import (
     ActionKind,
     ActionProposal,
+    ActionResourceKind,
     Citation,
     Disposition,
     PolicyDecision,
@@ -21,6 +22,8 @@ def evaluate(
     action: ActionProposal | None,
     settings: PolicySettings,
     now: datetime | None = None,
+    blocking_reasons: tuple[str, ...] = (),
+    blocking_disposition: Disposition = Disposition.ESCALATE,
 ) -> PolicyDecision:
     current_time = now or datetime.now(UTC)
     reasons: list[str] = []
@@ -36,6 +39,13 @@ def evaluate(
         reasons.append("insufficient_current_evidence")
     if confidence < settings.minimum_confidence:
         reasons.append("low_confidence")
+
+    if blocking_reasons:
+        return PolicyDecision(
+            disposition=blocking_disposition,
+            reasons=tuple((*blocking_reasons, *reasons)),
+            action_allowed=False,
+        )
 
     if action is None:
         if reasons:
@@ -57,6 +67,16 @@ def evaluate(
             action_allowed=False,
         )
     if action.kind is ActionKind.REFUND:
+        if (
+            action.resource_kind is not ActionResourceKind.PAYMENT
+            or action.resource_hash is None
+            or action.currency is None
+        ):
+            return PolicyDecision(
+                disposition=Disposition.REVIEW_REQUIRED,
+                reasons=("refund_payment_target_unverified",),
+                action_allowed=False,
+            )
         if action.amount is None:
             return PolicyDecision(
                 disposition=Disposition.REVIEW_REQUIRED,
