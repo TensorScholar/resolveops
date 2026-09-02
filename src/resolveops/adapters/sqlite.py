@@ -101,7 +101,8 @@ class SQLiteStore:
                 raise IntegrityError("persisted analysis object id does not match its key")
             if analysis.ticket_id in analysis_by_ticket:
                 raise IntegrityError(
-                    "multiple persisted analyses exist for one ticket; canonical analysis is ambiguous"
+                    "multiple persisted analyses exist for one ticket; "
+                    "canonical analysis is ambiguous"
                 )
             analyses[analysis.id] = analysis
             analysis_by_ticket[analysis.ticket_id] = analysis
