@@ -6,6 +6,7 @@ from resolveops.domain.models import (
     ActionExecution,
     ActionKind,
     ActionProposal,
+    ActionResourceKind,
     Approval,
     ExecutionResult,
     ExecutionState,
@@ -28,12 +29,21 @@ class MockActionExecutor:
             )
         reference_suffix = idempotency_key.removeprefix("ro_")[:24]
         if action.kind is ActionKind.REFUND:
+            if (
+                action.resource_kind is not ActionResourceKind.PAYMENT
+                or action.resource_hash is None
+                or action.currency is None
+            ):
+                return ExecutionResult(
+                    state=ExecutionState.FAILED,
+                    message="Refund payment target is not verified.",
+                )
             if action.amount is None:
                 return ExecutionResult(
                     state=ExecutionState.FAILED,
                     message="Refund amount is required.",
                 )
-            amount = f"${action.amount}"
+            amount = f"{action.amount} {action.currency.upper()}"
             return ExecutionResult(
                 state=ExecutionState.SUCCEEDED,
                 message=f"Mock refund of {amount} completed.",
