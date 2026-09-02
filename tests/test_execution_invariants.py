@@ -12,6 +12,7 @@ from resolveops.domain.models import (
     ActionExecution,
     ActionKind,
     ActionProposal,
+    ActionResourceKind,
     ExecutionResult,
     ExecutionState,
 )
@@ -24,7 +25,10 @@ def submitted_execution() -> ActionExecution:
         action=ActionProposal(
             kind=ActionKind.REFUND,
             resource_id="payment_1",
+            resource_kind=ActionResourceKind.PAYMENT,
+            resource_hash="a" * 64,
             amount=10,
+            currency="usd",
             reason="duplicate charge",
         ),
         idempotency_key="ro_stable",
