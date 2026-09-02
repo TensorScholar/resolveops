@@ -117,9 +117,10 @@ def test_sqlite_restart_preserves_canonical_analysis(tmp_path) -> None:
 
     assert replayed == first
     assert second_store.list_analyses() == [first]
-    assert len(
-        [event for event in second_store.list_audit() if event.event_type == "ticket.analyzed"]
-    ) == 1
+    assert (
+        len([event for event in second_store.list_audit() if event.event_type == "ticket.analyzed"])
+        == 1
+    )
 
 
 def test_reingestion_after_execution_cannot_create_second_transaction(tmp_path) -> None:
