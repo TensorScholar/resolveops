@@ -38,7 +38,17 @@ class MemoryStore:
         self._lock = RLock()
 
     def put_ticket(self, ticket: Ticket) -> None:
-        self.tickets[ticket.id] = ticket
+        incoming_hash = object_digest(ticket.model_dump(mode="json"))
+        with self._lock:
+            claimed_analysis_id = self._analysis_by_ticket.get(ticket.id)
+            if claimed_analysis_id is not None:
+                existing = self.tickets.get(ticket.id)
+                if existing is None or claimed_analysis_id not in self.analyses:
+                    raise IntegrityError("analysis claim references missing persisted objects")
+                if object_digest(existing.model_dump(mode="json")) != incoming_hash:
+                    raise IntegrityError("canonical ticket cannot be overwritten")
+                return
+            self.tickets[ticket.id] = ticket
 
     def get_ticket(self, ticket_id: str) -> Ticket | None:
         return self.tickets.get(ticket_id)
@@ -56,7 +66,17 @@ class MemoryStore:
         return list(self.articles.values())
 
     def put_analysis(self, analysis: AnalysisResult) -> None:
-        self.analyses[analysis.id] = analysis
+        with self._lock:
+            claimed_analysis_id = self._analysis_by_ticket.get(analysis.ticket_id)
+            if claimed_analysis_id is not None:
+                existing = self.analyses.get(claimed_analysis_id)
+                if claimed_analysis_id != analysis.id or existing != analysis:
+                    raise IntegrityError("canonical analysis cannot be overwritten")
+                return
+            existing = self.analyses.get(analysis.id)
+            if existing is not None and existing != analysis:
+                raise IntegrityError("analysis id is already in use")
+            self.analyses[analysis.id] = analysis
 
     @staticmethod
     def _validate_analysis_transition(
