@@ -29,6 +29,38 @@ Dependency rules:
 
 ## Transaction boundaries
 
+### Case ingestion
+
+Application ingestion uses the store-level `record_analysis` transition rather than separately
+persisting a ticket, analysis, and audit event. The transition binds one `Ticket.id` to:
+
+- the digest of the exact persisted ticket payload;
+- one canonical `AnalysisResult`;
+- one `ticket.analyzed` audit event.
+
+SQLite stores this relationship in `analysis_claims` and commits the ticket, analysis, claim, and
+audit event under one `BEGIN IMMEDIATE` transaction. An identical replay returns the canonical
+analysis. Reusing the same ticket ID with different content fails closed. Concurrent duplicate
+requests may perform redundant analysis work before persistence, but only one canonical analysis
+can commit and all successful callers converge on that persisted result.
+
+Concrete adapter helper writes are not part of the application `Store` contract. They are also
+prevented from mutating a ticket or analysis once that ticket owns a canonical analysis claim, so
+low-level fixture/setup access cannot silently invalidate canonical ownership after ingestion.
+
+On startup, a database missing an analysis claim can receive one only when hash-chained
+`ticket.analyzed` evidence already binds both the exact persisted ticket digest and the exact
+analysis digest. Historical events that predate ticket-payload binding are rejected rather than
+guessed into the new canonical model. Multiple historical analyses for one ticket are likewise
+rejected because no safe canonical choice can be inferred.
+
+An exact replay is retrieval of the already-created resolution transaction. It therefore does
+not regenerate the analysis from mutable customer-profile state. Mutable upstream case revisions,
+identity/authorization checks, and new resolution decisions require explicit integration
+contracts rather than changing the semantics of an idempotent replay.
+
+### Review and execution
+
 The review transition is atomic at the store boundary. An approved review and its initial
 `pending` execution claim are persisted with their audit events in one transaction. This
 prevents a crash between approval and execution-intent creation from leaving an approved action

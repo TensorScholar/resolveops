@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from threading import RLock
 
-from resolveops.domain.audit import make_event
+from resolveops.domain.audit import make_event, object_digest
 from resolveops.domain.errors import IntegrityError, InvalidTransitionError, NotFoundError
 from resolveops.domain.execution import validate_execution_update
 from resolveops.domain.models import (
@@ -27,6 +27,7 @@ class MemoryStore:
         self.customers: dict[str, CustomerProfile] = {}
         self.articles: dict[str, KnowledgeArticle] = {}
         self.analyses: dict[str, AnalysisResult] = {}
+        self._analysis_by_ticket: dict[str, str] = {}
         self.approvals: dict[str, Approval] = {}
         self._approval_by_analysis: dict[str, str] = {}
         self.executions: dict[str, ActionExecution] = {}
@@ -37,7 +38,17 @@ class MemoryStore:
         self._lock = RLock()
 
     def put_ticket(self, ticket: Ticket) -> None:
-        self.tickets[ticket.id] = ticket
+        incoming_hash = object_digest(ticket.model_dump(mode="json"))
+        with self._lock:
+            claimed_analysis_id = self._analysis_by_ticket.get(ticket.id)
+            if claimed_analysis_id is not None:
+                existing = self.tickets.get(ticket.id)
+                if existing is None or claimed_analysis_id not in self.analyses:
+                    raise IntegrityError("analysis claim references missing persisted objects")
+                if object_digest(existing.model_dump(mode="json")) != incoming_hash:
+                    raise IntegrityError("canonical ticket cannot be overwritten")
+                return
+            self.tickets[ticket.id] = ticket
 
     def get_ticket(self, ticket_id: str) -> Ticket | None:
         return self.tickets.get(ticket_id)
@@ -55,10 +66,78 @@ class MemoryStore:
         return list(self.articles.values())
 
     def put_analysis(self, analysis: AnalysisResult) -> None:
-        self.analyses[analysis.id] = analysis
+        with self._lock:
+            claimed_analysis_id = self._analysis_by_ticket.get(analysis.ticket_id)
+            if claimed_analysis_id is not None:
+                existing = self.analyses.get(claimed_analysis_id)
+                if claimed_analysis_id != analysis.id or existing != analysis:
+                    raise IntegrityError("canonical analysis cannot be overwritten")
+                return
+            existing = self.analyses.get(analysis.id)
+            if existing is not None and existing != analysis:
+                raise IntegrityError("analysis id is already in use")
+            self.analyses[analysis.id] = analysis
+
+    @staticmethod
+    def _validate_analysis_transition(
+        ticket: Ticket,
+        analysis: AnalysisResult,
+        audit_event: AuditEventDraft,
+    ) -> None:
+        ticket_hash = object_digest(ticket.model_dump(mode="json"))
+        analysis_hash = object_digest(analysis.model_dump(mode="json"))
+        if analysis.ticket_id != ticket.id:
+            raise IntegrityError("analysis does not belong to the ticket")
+        if audit_event.event_type != "ticket.analyzed" or audit_event.entity_id != analysis.id:
+            raise IntegrityError("analysis audit event targets the wrong transition")
+        if (
+            audit_event.payload.get("ticket_id") != ticket.id
+            or audit_event.payload.get("ticket_hash") != ticket_hash
+            or audit_event.payload.get("analysis_hash") != analysis_hash
+        ):
+            raise IntegrityError("analysis audit evidence does not match persisted objects")
+
+    def record_analysis(
+        self,
+        ticket: Ticket,
+        analysis: AnalysisResult,
+        *,
+        audit_event: AuditEventDraft,
+    ) -> AnalysisResult:
+        self._validate_analysis_transition(ticket, analysis, audit_event)
+        incoming_hash = object_digest(ticket.model_dump(mode="json"))
+        with self._lock:
+            existing_analysis_id = self._analysis_by_ticket.get(ticket.id)
+            if existing_analysis_id is not None:
+                existing_ticket = self.tickets.get(ticket.id)
+                existing_analysis = self.analyses.get(existing_analysis_id)
+                if existing_ticket is None or existing_analysis is None:
+                    raise IntegrityError("analysis claim references missing persisted objects")
+                if object_digest(existing_ticket.model_dump(mode="json")) != incoming_hash:
+                    raise IntegrityError("ticket id is already bound to different content")
+                return existing_analysis
+
+            existing_ticket = self.tickets.get(ticket.id)
+            if (
+                existing_ticket is not None
+                and object_digest(existing_ticket.model_dump(mode="json")) != incoming_hash
+            ):
+                raise IntegrityError("ticket id is already bound to different content")
+            if analysis.id in self.analyses:
+                raise IntegrityError("analysis id is already in use")
+
+            self.tickets[ticket.id] = ticket
+            self.analyses[analysis.id] = analysis
+            self._analysis_by_ticket[ticket.id] = analysis.id
+            self._append_draft_locked(audit_event)
+            return analysis
 
     def get_analysis(self, analysis_id: str) -> AnalysisResult | None:
         return self.analyses.get(analysis_id)
+
+    def get_analysis_for_ticket(self, ticket_id: str) -> AnalysisResult | None:
+        analysis_id = self._analysis_by_ticket.get(ticket_id)
+        return self.analyses.get(analysis_id) if analysis_id else None
 
     def list_analyses(self) -> list[AnalysisResult]:
         return list(self.analyses.values())

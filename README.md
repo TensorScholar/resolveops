@@ -48,6 +48,10 @@ agent traces.
 
 ## Current capabilities
 
+- one canonical analysis transaction for an exact support-case replay, with conflicting reuse of
+  the same ticket ID failing closed;
+- atomic ticket + analysis + canonical claim + audit persistence at the application ingestion
+  boundary;
 - visible evidence provenance with freshness, approval, and content-integrity checks;
 - deterministic business policy separated from response generation;
 - explicit refund, plan-change, and cancellation proposals;
@@ -104,6 +108,9 @@ See [Architecture](docs/architecture.md) and [Integration contracts](docs/integr
 
 High-impact actions are deliberately constrained:
 
+- identical support-case replays converge on one canonical analysis transaction;
+- reuse of the same ticket ID with changed content fails closed rather than silently creating a
+  new resolution transaction;
 - model output cannot override deterministic business policy;
 - stale, revoked, future-dated, or mutated evidence fails closed for approval;
 - ambiguous action parameters fail closed;
@@ -139,6 +146,7 @@ See [Release validation](docs/release-validation.md).
 
 ResolveOps owns:
 
+- support-case identity and canonical analysis ingestion;
 - support-case evidence assembly and applicability;
 - support-specific deterministic policy;
 - explicit action proposals and human review;

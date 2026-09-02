@@ -10,7 +10,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from resolveops.domain.audit import make_event
+from resolveops.domain.audit import make_event, object_digest, verify_chain
 from resolveops.domain.errors import IntegrityError, InvalidTransitionError, NotFoundError
 from resolveops.domain.execution import validate_execution_update
 from resolveops.domain.models import (
@@ -59,6 +59,11 @@ class SQLiteStore:
                     sequence INTEGER PRIMARY KEY,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS analysis_claims (
+                    ticket_id TEXT PRIMARY KEY,
+                    analysis_id TEXT UNIQUE NOT NULL,
+                    ticket_hash TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS approval_claims (
                     analysis_id TEXT PRIMARY KEY,
                     approval_id TEXT UNIQUE NOT NULL
@@ -71,6 +76,7 @@ class SQLiteStore:
                 """
             )
             connection.execute("BEGIN IMMEDIATE")
+            self._validate_and_upgrade_analysis_claims(connection)
             self._validate_and_upgrade_execution_claims(connection)
 
     @staticmethod
@@ -79,6 +85,99 @@ class SQLiteStore:
             return model_type.model_validate_json(payload)
         except (ValidationError, ValueError, TypeError) as exc:
             raise IntegrityError(f"invalid persisted {label} payload") from exc
+
+    def _validate_and_upgrade_analysis_claims(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        analysis_rows = connection.execute(
+            "SELECT id,payload FROM objects WHERE kind='analysis' ORDER BY id"
+        ).fetchall()
+        analyses: dict[str, AnalysisResult] = {}
+        analysis_by_ticket: dict[str, AnalysisResult] = {}
+        for object_id, payload in analysis_rows:
+            analysis = self._decode(payload, AnalysisResult, label="analysis")
+            if analysis.id != object_id:
+                raise IntegrityError("persisted analysis object id does not match its key")
+            if analysis.ticket_id in analysis_by_ticket:
+                raise IntegrityError(
+                    "multiple persisted analyses exist for one ticket; "
+                    "canonical analysis is ambiguous"
+                )
+            analyses[analysis.id] = analysis
+            analysis_by_ticket[analysis.ticket_id] = analysis
+
+        claim_rows = connection.execute(
+            "SELECT ticket_id,analysis_id,ticket_hash FROM analysis_claims ORDER BY ticket_id"
+        ).fetchall()
+        claims_by_ticket: dict[str, tuple[str, str]] = {}
+        for ticket_id, analysis_id, ticket_hash in claim_rows:
+            claimed_analysis = analyses.get(analysis_id)
+            if claimed_analysis is None or claimed_analysis.ticket_id != ticket_id:
+                raise IntegrityError("analysis claim does not match a persisted analysis")
+            ticket_row = connection.execute(
+                "SELECT payload FROM objects WHERE kind='ticket' AND id=?",
+                (ticket_id,),
+            ).fetchone()
+            if ticket_row is None:
+                raise IntegrityError("analysis claim references a missing ticket")
+            ticket = self._decode(ticket_row[0], Ticket, label="ticket")
+            if ticket.id != ticket_id:
+                raise IntegrityError("persisted ticket object id does not match its key")
+            expected_ticket_hash = object_digest(ticket.model_dump(mode="json"))
+            if ticket_hash != expected_ticket_hash:
+                raise IntegrityError("analysis claim ticket hash does not match persisted ticket")
+            claims_by_ticket[ticket_id] = (analysis_id, ticket_hash)
+
+        audit_events: list[AuditEvent] | None = None
+        for ticket_id, analysis in analysis_by_ticket.items():
+            ticket_row = connection.execute(
+                "SELECT payload FROM objects WHERE kind='ticket' AND id=?",
+                (ticket_id,),
+            ).fetchone()
+            if ticket_row is None:
+                raise IntegrityError("persisted analysis references a missing ticket")
+            ticket = self._decode(ticket_row[0], Ticket, label="ticket")
+            if ticket.id != ticket_id:
+                raise IntegrityError("persisted ticket object id does not match its key")
+            ticket_hash = object_digest(ticket.model_dump(mode="json"))
+
+            existing_claim = claims_by_ticket.get(ticket_id)
+            if existing_claim is not None:
+                if existing_claim != (analysis.id, ticket_hash):
+                    raise IntegrityError("analysis claim conflicts with persisted objects")
+                continue
+
+            if audit_events is None:
+                rows = connection.execute(
+                    "SELECT payload FROM audit_events ORDER BY sequence"
+                ).fetchall()
+                audit_events = [
+                    self._decode(row[0], AuditEvent, label="audit event") for row in rows
+                ]
+                verify_chain(audit_events)
+            matches = [
+                event
+                for event in audit_events
+                if event.event_type == "ticket.analyzed" and event.entity_id == analysis.id
+            ]
+            analysis_hash = object_digest(analysis.model_dump(mode="json"))
+            if (
+                len(matches) != 1
+                or matches[0].payload.get("ticket_id") != ticket_id
+                or matches[0].payload.get("ticket_hash") != ticket_hash
+                or matches[0].payload.get("analysis_hash") != analysis_hash
+            ):
+                raise IntegrityError(
+                    "legacy analysis cannot be canonically claimed without exact "
+                    "ticket and analysis audit evidence"
+                )
+
+            connection.execute(
+                "INSERT INTO analysis_claims(ticket_id,analysis_id,ticket_hash) VALUES(?,?,?)",
+                (ticket_id, analysis.id, ticket_hash),
+            )
+            claims_by_ticket[ticket_id] = (analysis.id, ticket_hash)
 
     def _validate_and_upgrade_execution_claims(
         self,
@@ -251,6 +350,25 @@ class SQLiteStore:
         return event
 
     @staticmethod
+    def _validate_analysis_transition(
+        ticket: Ticket,
+        analysis: AnalysisResult,
+        audit_event: AuditEventDraft,
+    ) -> None:
+        ticket_hash = object_digest(ticket.model_dump(mode="json"))
+        analysis_hash = object_digest(analysis.model_dump(mode="json"))
+        if analysis.ticket_id != ticket.id:
+            raise IntegrityError("analysis does not belong to the ticket")
+        if audit_event.event_type != "ticket.analyzed" or audit_event.entity_id != analysis.id:
+            raise IntegrityError("analysis audit event targets the wrong transition")
+        if (
+            audit_event.payload.get("ticket_id") != ticket.id
+            or audit_event.payload.get("ticket_hash") != ticket_hash
+            or audit_event.payload.get("analysis_hash") != analysis_hash
+        ):
+            raise IntegrityError("analysis audit evidence does not match persisted objects")
+
+    @staticmethod
     def _validate_review_transition(
         approval: Approval,
         execution: ActionExecution | None,
@@ -273,7 +391,30 @@ class SQLiteStore:
             raise IntegrityError("execution claim does not match approved review")
 
     def put_ticket(self, ticket: Ticket) -> None:
-        self._put("ticket", ticket.id, ticket)
+        incoming_hash = object_digest(ticket.model_dump(mode="json"))
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            claim = connection.execute(
+                "SELECT ticket_hash FROM analysis_claims WHERE ticket_id=?",
+                (ticket.id,),
+            ).fetchone()
+            if claim is not None:
+                if claim[0] != incoming_hash:
+                    raise IntegrityError("canonical ticket cannot be overwritten")
+                row = connection.execute(
+                    "SELECT payload FROM objects WHERE kind='ticket' AND id=?",
+                    (ticket.id,),
+                ).fetchone()
+                if row is None:
+                    raise IntegrityError("analysis claim references a missing ticket")
+                existing = self._decode(row[0], Ticket, label="ticket")
+                if object_digest(existing.model_dump(mode="json")) != incoming_hash:
+                    raise IntegrityError("analysis claim ticket hash is inconsistent")
+                return
+            connection.execute(
+                "INSERT OR REPLACE INTO objects(kind,id,payload) VALUES('ticket',?,?)",
+                (ticket.id, ticket.model_dump_json()),
+            )
 
     def get_ticket(self, ticket_id: str) -> Ticket | None:
         return self._get("ticket", ticket_id, Ticket)
@@ -291,10 +432,120 @@ class SQLiteStore:
         return self._list("article", KnowledgeArticle)
 
     def put_analysis(self, analysis: AnalysisResult) -> None:
-        self._put("analysis", analysis.id, analysis)
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            claim = connection.execute(
+                "SELECT analysis_id FROM analysis_claims WHERE ticket_id=?",
+                (analysis.ticket_id,),
+            ).fetchone()
+            if claim is not None:
+                if claim[0] != analysis.id:
+                    raise IntegrityError("canonical analysis cannot be overwritten")
+                row = connection.execute(
+                    "SELECT payload FROM objects WHERE kind='analysis' AND id=?",
+                    (analysis.id,),
+                ).fetchone()
+                if row is None:
+                    raise IntegrityError("analysis claim references a missing analysis")
+                if self._decode(row[0], AnalysisResult, label="analysis") != analysis:
+                    raise IntegrityError("canonical analysis cannot be overwritten")
+                return
+            row = connection.execute(
+                "SELECT payload FROM objects WHERE kind='analysis' AND id=?",
+                (analysis.id,),
+            ).fetchone()
+            if row is not None:
+                if self._decode(row[0], AnalysisResult, label="analysis") != analysis:
+                    raise IntegrityError("analysis id is already in use")
+                return
+            connection.execute(
+                "INSERT INTO objects(kind,id,payload) VALUES('analysis',?,?)",
+                (analysis.id, analysis.model_dump_json()),
+            )
+
+    def record_analysis(
+        self,
+        ticket: Ticket,
+        analysis: AnalysisResult,
+        *,
+        audit_event: AuditEventDraft,
+    ) -> AnalysisResult:
+        self._validate_analysis_transition(ticket, analysis, audit_event)
+        incoming_ticket_hash = object_digest(ticket.model_dump(mode="json"))
+        try:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                claim = connection.execute(
+                    "SELECT analysis_id,ticket_hash FROM analysis_claims WHERE ticket_id=?",
+                    (ticket.id,),
+                ).fetchone()
+                if claim is not None:
+                    analysis_id, claimed_ticket_hash = claim
+                    if claimed_ticket_hash != incoming_ticket_hash:
+                        raise IntegrityError("ticket id is already bound to different content")
+                    ticket_row = connection.execute(
+                        "SELECT payload FROM objects WHERE kind='ticket' AND id=?",
+                        (ticket.id,),
+                    ).fetchone()
+                    analysis_row = connection.execute(
+                        "SELECT payload FROM objects WHERE kind='analysis' AND id=?",
+                        (analysis_id,),
+                    ).fetchone()
+                    if ticket_row is None or analysis_row is None:
+                        raise IntegrityError("analysis claim references missing persisted objects")
+                    persisted_ticket = self._decode(ticket_row[0], Ticket, label="ticket")
+                    if (
+                        object_digest(persisted_ticket.model_dump(mode="json"))
+                        != incoming_ticket_hash
+                    ):
+                        raise IntegrityError("analysis claim ticket hash is inconsistent")
+                    persisted_analysis = self._decode(
+                        analysis_row[0], AnalysisResult, label="analysis"
+                    )
+                    if persisted_analysis.ticket_id != ticket.id:
+                        raise IntegrityError("analysis claim points to the wrong ticket")
+                    return persisted_analysis
+
+                ticket_row = connection.execute(
+                    "SELECT payload FROM objects WHERE kind='ticket' AND id=?",
+                    (ticket.id,),
+                ).fetchone()
+                if ticket_row is None:
+                    connection.execute(
+                        "INSERT INTO objects(kind,id,payload) VALUES('ticket',?,?)",
+                        (ticket.id, ticket.model_dump_json()),
+                    )
+                else:
+                    persisted_ticket = self._decode(ticket_row[0], Ticket, label="ticket")
+                    if (
+                        object_digest(persisted_ticket.model_dump(mode="json"))
+                        != incoming_ticket_hash
+                    ):
+                        raise IntegrityError("ticket id is already bound to different content")
+
+                connection.execute(
+                    "INSERT INTO objects(kind,id,payload) VALUES('analysis',?,?)",
+                    (analysis.id, analysis.model_dump_json()),
+                )
+                connection.execute(
+                    "INSERT INTO analysis_claims(ticket_id,analysis_id,ticket_hash) VALUES(?,?,?)",
+                    (ticket.id, analysis.id, incoming_ticket_hash),
+                )
+                self._append_draft(connection, audit_event)
+                return analysis
+        except sqlite3.IntegrityError as exc:
+            raise IntegrityError("analysis transaction could not be persisted atomically") from exc
 
     def get_analysis(self, analysis_id: str) -> AnalysisResult | None:
         return self._get("analysis", analysis_id, AnalysisResult)
+
+    def get_analysis_for_ticket(self, ticket_id: str) -> AnalysisResult | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT analysis_id FROM analysis_claims WHERE ticket_id=?",
+                (ticket_id,),
+            ).fetchone()
+        return self.get_analysis(row[0]) if row else None
 
     def list_analyses(self) -> list[AnalysisResult]:
         return self._list("analysis", AnalysisResult)
