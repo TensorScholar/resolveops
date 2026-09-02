@@ -40,6 +40,6 @@ jobs:
       - run: python scripts/generate_schemas.py && git diff --exit-code -- schemas
       - run: >-
           pytest -o addopts='-q --strict-markers' -W error::ResourceWarning
-          --cov=resolveops --cov-branch --cov-report=xml
+          --cov=resolveops --cov-branch --cov-report=xml --cov-fail-under=85
       - run: python -m resolveops demo
       - run: python -m pip_audit
