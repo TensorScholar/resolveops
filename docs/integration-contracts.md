@@ -14,8 +14,15 @@ An action executor receives:
 - the approved `Approval`;
 - a stable, non-sensitive idempotency key.
 
-It returns an `ExecutionResult` with an explicit lifecycle state, a sanitized message, an
-optional opaque external reference, and an optional provider status.
+Before either `execute` or `reconcile` is invoked, ResolveOps persists the execution as
+`in_flight` and increments its attempt number. This transition occurs before the provider
+boundary so process termination cannot erase the fact that an adapter interaction may have
+started. A returned provider result completes that same attempt; it does not increment the
+attempt number again.
+
+The executor returns an `ExecutionResult` with an external lifecycle state, a sanitized message,
+an optional opaque external reference, and an optional provider status. `pending` and
+`in_flight` are internal ResolveOps states and are not valid executor results.
 
 The executor must not translate transport uncertainty into a definitive failure. If the caller
 cannot establish the provider outcome, the result is `unknown`.
@@ -27,7 +34,8 @@ Implementations must be side-effect-safe. Depending on the provider, reconciliat
 read API, webhook-derived state, or a retry with the **same** provider-supported idempotency key.
 
 Reconciliation must never invent a fresh action identity merely because the original response
-was lost.
+was lost. A known external operation reference is immutable once recorded; later reconciliation
+must continue to refer to that operation.
 
 Provider-specific adapters are also responsible for documenting:
 
