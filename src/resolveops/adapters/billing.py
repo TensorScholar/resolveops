@@ -19,3 +19,7 @@ class MemoryBillingReader:
     def put_payment(self, payment: PaymentSnapshot) -> None:
         """Replace a fixture snapshot to simulate system-of-record state changes."""
         self._payments[payment.id] = payment
+
+    def remove_payment(self, payment_id: str) -> None:
+        """Remove a fixture snapshot to simulate a missing system-of-record resource."""
+        self._payments.pop(payment_id, None)
