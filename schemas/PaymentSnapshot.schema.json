@@ -25,7 +25,6 @@
           "type": "string"
         }
       ],
-      "default": "0",
       "title": "Amount Refunded"
     },
     "currency": {
@@ -46,12 +45,10 @@
       "type": "string"
     },
     "refundable": {
-      "default": true,
       "title": "Refundable",
       "type": "boolean"
     },
     "status": {
-      "default": "succeeded",
       "maxLength": 120,
       "minLength": 1,
       "title": "Status",
@@ -62,7 +59,10 @@
     "id",
     "customer_id",
     "amount",
-    "currency"
+    "amount_refunded",
+    "currency",
+    "refundable",
+    "status"
   ],
   "title": "PaymentSnapshot",
   "type": "object"
