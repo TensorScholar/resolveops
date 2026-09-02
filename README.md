@@ -19,7 +19,9 @@ support case + customer context + approved evidence
                     ↓
      durable execution claim + idempotency key
                     ↓
-        provider execution / reconciliation
+      durable in-flight provider interaction
+                    ↓
+        provider result / reconciliation
                     ↓
           verified support outcome + audit
 ```
@@ -52,10 +54,12 @@ agent traces.
 - mandatory human review for destructive actions in the current development line;
 - one atomic review transition that also claims the approved execution intent;
 - stable, non-sensitive idempotency keys for external action attempts;
-- explicit execution states: `pending`, `submitted`, `succeeded`, `failed`, `unknown`;
+- explicit execution states: `pending`, `in_flight`, `submitted`, `succeeded`, `failed`, `unknown`;
+- a durable pre-call `in_flight` transition so process termination cannot erase that a provider
+  interaction may have started;
 - persisted uncertain execution state that survives process restart;
 - reconciliation as a separate, auditable operation;
-- hash-chained audit evidence over analyses and execution transitions;
+- hash-chained audit evidence over analyses, approvals, and execution transitions;
 - SQLite and in-memory persistence;
 - support-outcome and execution-integrity metrics;
 - CLI workflows and an optional FastAPI adapter;
@@ -106,10 +110,11 @@ High-impact actions are deliberately constrained:
 - destructive actions require explicit human review in the current development line;
 - approval and execution intent are persisted together so a process crash cannot lose the
   fact that an approved action is due for execution;
+- every external adapter invocation is first persisted as an `in_flight` attempt;
 - an external call uses a stable idempotency key;
 - transport ambiguity is represented as `unknown`, never silently collapsed into failure;
 - non-terminal executions can be reconciled after restart;
-- execution records are bound into the hash-chained audit log.
+- analysis, approval, and execution records are bound into the hash-chained audit log.
 
 This is not a complete production security boundary. Authentication, tenant isolation,
 credential handling, provider-specific idempotency guarantees, webhook authenticity, and
