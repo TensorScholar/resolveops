@@ -71,6 +71,28 @@ def test_concurrent_review_allows_one_execution(tmp_path) -> None:
     service.verify_audit()
 
 
+def test_persisted_approval_tampering_fails_closed(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "approval-tamper.db")
+    service = build_service(store)
+    analysis = service.analyze(Ticket(customer_id="c", message="Refund $10"))
+    approval, execution = service.review(
+        analysis.id,
+        reviewer="manager@example.com",
+        approve=True,
+    )
+    assert execution is not None
+
+    tampered = approval.model_copy(update={"reviewer": "attacker@example.com"})
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            "UPDATE objects SET payload=? WHERE kind='approval' AND id=?",
+            (tampered.model_dump_json(), approval.id),
+        )
+
+    with pytest.raises(IntegrityError, match="approval record does not match its audit evidence"):
+        service.get_execution_for_analysis(analysis.id)
+
+
 def test_malformed_persisted_json_fails_closed(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "corrupt.db")
     store.put_customer(CustomerProfile(id="c"))

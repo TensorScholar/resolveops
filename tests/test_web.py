@@ -45,7 +45,17 @@ def test_review_request_is_strict_and_replay_safe(tmp_path) -> None:
         json={"reviewer": "manager@example.com", "approve": True},
     )
     assert approved.status_code == 200
-    assert approved.json()["execution"]["success"] is True
+    execution = approved.json()["execution"]
+    assert execution["state"] == "succeeded"
+    assert execution["attempt_count"] == 1
+    assert execution["idempotency_key"].startswith("ro_")
+
+    recovered = client.get(f"/analyses/{analysis_id}/execution")
+    assert recovered.status_code == 200
+    assert recovered.json()["id"] == execution["id"]
+
+    terminal_reconcile = client.post(f"/executions/{execution['id']}/reconcile")
+    assert terminal_reconcile.status_code == 409
 
     replay = client.post(
         f"/analyses/{analysis_id}/approve",

@@ -12,16 +12,24 @@ from resolveops.domain.errors import (
     NotFoundError,
     PolicyDeniedError,
 )
+from resolveops.domain.execution import (
+    apply_execution_result,
+    begin_execution_attempt,
+    build_idempotency_key,
+)
 from resolveops.domain.models import (
     ActionExecution,
     AnalysisResult,
     Approval,
     AuditEvent,
+    AuditEventDraft,
     Citation,
     CustomerProfile,
     Disposition,
     EvaluationCase,
     EvaluationSummary,
+    ExecutionResult,
+    ExecutionState,
     Outcome,
     PolicySettings,
     ReviewState,
@@ -63,6 +71,45 @@ class ResolveOpsService:
             raise IntegrityError("analysis record does not match its audit evidence")
         return events
 
+    def _verify_approval_integrity(self, approval: Approval) -> None:
+        events = self.store.list_audit()
+        verify_chain(events)
+        matches = [
+            event
+            for event in events
+            if event.event_type == "analysis.reviewed" and event.entity_id == approval.id
+        ]
+        expected = object_digest(approval.model_dump(mode="json"))
+        if len(matches) != 1 or matches[0].payload.get("approval_hash") != expected:
+            raise IntegrityError("approval record does not match its audit evidence")
+
+    def _verify_execution_integrity(self, execution: ActionExecution) -> None:
+        events = self.store.list_audit()
+        verify_chain(events)
+        matches = [
+            event
+            for event in events
+            if event.entity_id == execution.id
+            and event.event_type
+            in {
+                "action.execution_claimed",
+                "action.execution_attempt_started",
+                "action.execution_updated",
+            }
+        ]
+        expected = object_digest(execution.model_dump(mode="json"))
+        if not matches or matches[-1].payload.get("execution_hash") != expected:
+            raise IntegrityError("execution record does not match its audit evidence")
+
+    def _approved_review_for_execution(self, execution: ActionExecution) -> Approval:
+        approval = self.store.get_approval(execution.approval_id)
+        if approval is None:
+            raise IntegrityError("execution does not have a persisted approval")
+        self._verify_approval_integrity(approval)
+        if approval.state is not ReviewState.APPROVED:
+            raise IntegrityError("execution does not have a valid approved review")
+        return approval
+
     def _current_citations(self, analysis: AnalysisResult) -> tuple[Citation, ...]:
         now = datetime.now(UTC)
         articles = {article.id: article for article in self.store.list_articles()}
@@ -84,6 +131,44 @@ class ResolveOpsService:
                 continue
             current.append(citation)
         return tuple(current)
+
+    @staticmethod
+    def _execution_audit(execution: ActionExecution, event_type: str) -> AuditEventDraft:
+        return AuditEventDraft(
+            event_type=event_type,
+            entity_id=execution.id,
+            payload={
+                "analysis_id": execution.analysis_id,
+                "approval_id": execution.approval_id,
+                "state": execution.state.value,
+                "attempt_count": execution.attempt_count,
+                "external_reference": execution.external_reference,
+                "provider_status": execution.provider_status,
+                "action_hash": object_digest(execution.action.model_dump(mode="json")),
+                "idempotency_key_hash": object_digest(execution.idempotency_key),
+                "execution_hash": object_digest(execution.model_dump(mode="json")),
+            },
+        )
+
+    def _begin_execution_attempt(self, execution: ActionExecution) -> ActionExecution:
+        updated = begin_execution_attempt(execution)
+        self.store.update_execution(
+            updated,
+            audit_event=self._execution_audit(updated, "action.execution_attempt_started"),
+        )
+        return updated
+
+    def _persist_execution_result(
+        self,
+        execution: ActionExecution,
+        result: ExecutionResult,
+    ) -> ActionExecution:
+        updated = apply_execution_result(execution, result)
+        self.store.update_execution(
+            updated,
+            audit_event=self._execution_audit(updated, "action.execution_updated"),
+        )
+        return updated
 
     def seed_customer(self, customer: CustomerProfile) -> None:
         self.store.put_customer(customer)
@@ -162,59 +247,104 @@ class ResolveOpsService:
             raise PolicyDeniedError("denied analysis cannot be approved")
         if analysis.proposed_action is None:
             raise InvalidTransitionError("analysis has no action to review")
-        decision = evaluate(
-            confidence=analysis.confidence,
-            citations=self._current_citations(analysis),
-            action=analysis.proposed_action,
-            settings=self.policy,
-        )
-        if not decision.action_allowed:
-            reason = decision.reasons[0] if decision.reasons else "policy_denied_action"
-            raise PolicyDeniedError(f"action is not allowed: {reason}")
         if analysis.disposition is not Disposition.REVIEW_REQUIRED:
             raise InvalidTransitionError("analysis is not waiting for review")
+        if approve:
+            decision = evaluate(
+                confidence=analysis.confidence,
+                citations=self._current_citations(analysis),
+                action=analysis.proposed_action,
+                settings=self.policy,
+            )
+            if not decision.action_allowed:
+                reason = decision.reasons[0] if decision.reasons else "policy_denied_action"
+                raise PolicyDeniedError(f"action is not allowed: {reason}")
+
         approval = Approval(
             analysis_id=analysis.id,
             reviewer=reviewer,
             state=ReviewState.APPROVED if approve else ReviewState.REJECTED,
             note=note,
         )
-        self.store.put_approval(approval)
-        self._audit(
-            "analysis.reviewed",
-            approval.id,
-            {"analysis_id": analysis.id, "state": approval.state.value, "reviewer": reviewer},
-        )
-        if not approve:
-            return approval, None
-        try:
-            success, message, reference = self.action_executor.execute(
-                analysis.proposed_action,
-                approval=approval,
-            )
-        except Exception:
-            success = False
-            message = "Action execution outcome is unknown; manual reconciliation is required."
-            reference = None
-        execution = ActionExecution(
-            analysis_id=analysis.id,
-            approval_id=approval.id,
-            action=analysis.proposed_action,
-            success=success,
-            message=message,
-            external_reference=reference,
-        )
-        self.store.put_execution(execution)
-        self._audit(
-            "action.executed",
-            execution.id,
-            {
+        review_event = AuditEventDraft(
+            event_type="analysis.reviewed",
+            entity_id=approval.id,
+            payload={
                 "analysis_id": analysis.id,
-                "success": success,
-                "external_reference": reference,
+                "state": approval.state.value,
+                "reviewer": reviewer,
+                "analysis_hash": object_digest(analysis.model_dump(mode="json")),
+                "approval_hash": object_digest(approval.model_dump(mode="json")),
             },
         )
-        return approval, execution
+
+        execution: ActionExecution | None = None
+        audit_events: tuple[AuditEventDraft, ...] = (review_event,)
+        if approve:
+            execution = ActionExecution(
+                analysis_id=analysis.id,
+                approval_id=approval.id,
+                action=analysis.proposed_action,
+                idempotency_key=build_idempotency_key(approval, analysis.proposed_action),
+            )
+            audit_events = (
+                review_event,
+                self._execution_audit(execution, "action.execution_claimed"),
+            )
+
+        self.store.record_review(
+            approval,
+            execution,
+            audit_events=audit_events,
+        )
+        if execution is None:
+            return approval, None
+
+        execution = self._begin_execution_attempt(execution)
+        try:
+            result = self.action_executor.execute(
+                execution.action,
+                approval=approval,
+                idempotency_key=execution.idempotency_key,
+            )
+        except Exception:
+            result = ExecutionResult(
+                state=ExecutionState.UNKNOWN,
+                message=(
+                    "Provider outcome is unknown; reconcile this execution before any "
+                    "further action."
+                ),
+            )
+        return approval, self._persist_execution_result(execution, result)
+
+    def get_execution_for_analysis(self, analysis_id: str) -> ActionExecution:
+        if self.store.get_analysis(analysis_id) is None:
+            raise NotFoundError(f"analysis not found: {analysis_id}")
+        execution = self.store.get_execution_for_analysis(analysis_id)
+        if execution is None:
+            raise NotFoundError(f"execution not found for analysis: {analysis_id}")
+        self._verify_execution_integrity(execution)
+        self._approved_review_for_execution(execution)
+        return execution
+
+    def reconcile_execution(self, execution_id: str) -> ActionExecution:
+        execution = self.store.get_execution(execution_id)
+        if execution is None:
+            raise NotFoundError(f"execution not found: {execution_id}")
+        self._verify_execution_integrity(execution)
+        self._approved_review_for_execution(execution)
+        if execution.state.terminal:
+            raise InvalidTransitionError("terminal execution does not require reconciliation")
+
+        execution = self._begin_execution_attempt(execution)
+        try:
+            result = self.action_executor.reconcile(execution)
+        except Exception:
+            result = ExecutionResult(
+                state=ExecutionState.UNKNOWN,
+                message="Reconciliation outcome is unknown; manual investigation is required.",
+            )
+        return self._persist_execution_result(execution, result)
 
     def record_outcome(self, outcome: Outcome) -> None:
         if self.store.get_ticket(outcome.ticket_id) is None:
@@ -237,6 +367,18 @@ class ResolveOpsService:
         executions = self.store.list_executions()
         resolved = sum(item.resolved for item in outcomes)
         total_cost = sum((item.model_cost_usd for item in outcomes), Decimal("0"))
+        terminal_executions = [item for item in executions if item.state.terminal]
+        reconciliation_required = [
+            item
+            for item in executions
+            if item.state
+            in {
+                ExecutionState.PENDING,
+                ExecutionState.IN_FLIGHT,
+                ExecutionState.SUBMITTED,
+                ExecutionState.UNKNOWN,
+            }
+        ]
         return {
             "analyses": len(analyses),
             "outcomes": len(outcomes),
@@ -251,8 +393,23 @@ class ResolveOpsService:
                 sum(bool(item.citations) for item in analyses) / len(analyses) if analyses else 0.0
             ),
             "action_success_rate": (
-                sum(item.success for item in executions) / len(executions) if executions else 0.0
+                sum(item.state is ExecutionState.SUCCEEDED for item in terminal_executions)
+                / len(terminal_executions)
+                if terminal_executions
+                else 0.0
             ),
+            "action_failure_rate": (
+                sum(item.state is ExecutionState.FAILED for item in terminal_executions)
+                / len(terminal_executions)
+                if terminal_executions
+                else 0.0
+            ),
+            "action_unknown_rate": (
+                sum(item.state is ExecutionState.UNKNOWN for item in executions) / len(executions)
+                if executions
+                else 0.0
+            ),
+            "actions_requiring_reconciliation": len(reconciliation_required),
             "cost_per_resolved_outcome_usd": (
                 str((total_cost / resolved).quantize(Decimal("0.0001"))) if resolved else "0"
             ),

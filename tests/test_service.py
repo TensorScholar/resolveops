@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from resolveops.domain.errors import InvalidTransitionError, PolicyDeniedError
-from resolveops.domain.models import Disposition, Outcome, Ticket
+from resolveops.domain.models import Disposition, ExecutionState, Outcome, Ticket
 
 
 def test_analyze_refund(service) -> None:
@@ -25,7 +25,9 @@ def test_approve_and_execute(service) -> None:
         approve=True,
     )
     assert approval.state.value == "approved"
-    assert execution is not None and execution.success
+    assert execution is not None and execution.state is ExecutionState.SUCCEEDED
+    assert execution.attempt_count == 1
+    assert execution.idempotency_key.startswith("ro_")
 
 
 def test_reject_does_not_execute(service) -> None:
@@ -37,6 +39,18 @@ def test_reject_does_not_execute(service) -> None:
         reviewer="manager@example.com",
         approve=False,
     )
+    assert execution is None
+
+
+def test_rejection_remains_possible_after_evidence_becomes_stale(service) -> None:
+    analysis = service.analyze(Ticket(customer_id="cust_1", message="Refund $49"))
+    service.store.articles.clear()
+    approval, execution = service.review(
+        analysis.id,
+        reviewer="manager@example.com",
+        approve=False,
+    )
+    assert approval.state.value == "rejected"
     assert execution is None
 
 
@@ -61,8 +75,9 @@ def test_unknown_refund_amount_cannot_be_approved(service) -> None:
 
 
 def test_missing_evidence_action_cannot_be_approved(service) -> None:
-    service.store.articles.clear()
     analysis = service.analyze(Ticket(customer_id="cust_1", message="Refund $49"))
+    assert analysis.disposition is Disposition.REVIEW_REQUIRED
+    service.store.articles.clear()
     with pytest.raises(PolicyDeniedError, match="insufficient_current_evidence"):
         service.review(analysis.id, reviewer="manager@example.com", approve=True)
     assert service.store.list_executions() == []

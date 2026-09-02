@@ -1,34 +1,61 @@
 # Architecture
 
-ResolveOps is a modular monolith.
+ResolveOps is a modular monolith. Its primary aggregate is a **support-resolution transaction**:
+evidence and policy produce an explicit action proposal; review creates a durable execution
+intent; provider interaction advances that execution through reconciliation to a terminal
+outcome.
 
 ```text
 CLI / FastAPI / composition root
-     |
-application service
-     |
-domain functions and models
-     |
-ports
-  /      \
-SQLite   deterministic generator
-memory   mock action executor
+          |
+   application service
+          |
+   domain models + policy
+          |
+        ports
+      /       \
+ SQLite       response generator
+ memory       action executor
 ```
 
 Dependency rules:
 
-- `domain` imports only the standard library and Pydantic schema types.
-- `application` imports domain and ports, never adapters.
-- `ports` import domain types.
-- `adapters` implement ports.
-- the top-level composition root selects adapters for `web`, `cli`, and demos.
-- no domain module imports FastAPI, SQLite, Typer, or a vendor SDK.
+- `domain` imports only the standard library, Pydantic schema types, and sibling domain modules;
+- `application` imports domain and ports, never adapters;
+- `ports` import domain types;
+- `adapters` implement ports;
+- the composition root selects adapters for web, CLI, and demos;
+- vendor SDKs and network clients never enter the domain layer.
 
-Vertical slices are preferred over empty architecture layers. A new action must include:
+## Transaction boundaries
 
-1. domain schema;
-2. policy behavior;
-3. executor implementation;
-4. tests;
-5. audit event;
-6. documentation.
+The review transition is atomic at the store boundary. An approved review and its initial
+`pending` execution claim are persisted with their audit events in one transaction. This
+prevents a crash between approval and execution-intent creation from leaving an approved action
+with no recoverable operation.
+
+External side effects cannot share the local database transaction. ResolveOps therefore:
+
+1. persists the execution claim and stable idempotency key;
+2. persists an `in_flight` transition and increments the attempt number **before** invoking the
+   external adapter;
+3. calls the external executor;
+4. completes that same attempt as `submitted`, `succeeded`, `failed`, or `unknown` without
+   incrementing it again;
+5. if the process terminates after step 2, retains an auditable `in_flight` execution instead of
+   pretending no attempt occurred;
+6. reconciles any non-terminal execution through the adapter, again persisting a new
+   `in_flight` attempt before crossing the provider boundary;
+7. binds every persisted execution transition into audit evidence.
+
+Persisting `in_flight` before the call is intentionally conservative: a process can terminate
+after the local transition but before bytes reach the provider. ResolveOps therefore treats an
+orphaned `in_flight` state as uncertain and reconciles it using the same action identity rather
+than assuming either success or non-execution.
+
+A provider adapter is responsible for implementing reconciliation safely according to the
+provider's contract. ResolveOps does not blindly replay an action with a fresh identifier.
+
+Vertical slices are preferred over empty architecture layers. A production action path must
+include domain semantics, deterministic policy, an integration contract, failure/retry behavior,
+audit evidence, tests, and operator recovery behavior.

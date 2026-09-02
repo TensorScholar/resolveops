@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Annotated
 from uuid import uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 StrictMoney = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=12, decimal_places=2)]
 StrictCost = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=14, decimal_places=6)]
@@ -54,6 +54,19 @@ class ReviewState(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class ExecutionState(StrEnum):
+    PENDING = "pending"
+    IN_FLIGHT = "in_flight"
+    SUBMITTED = "submitted"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+    @property
+    def terminal(self) -> bool:
+        return self in {ExecutionState.SUCCEEDED, ExecutionState.FAILED}
 
 
 class Ticket(StrictModel):
@@ -134,10 +147,54 @@ class ActionExecution(StrictModel):
     analysis_id: str
     approval_id: str
     action: ActionProposal
-    success: bool
-    external_reference: str | None = None
-    message: str
-    executed_at: AwareDatetime = Field(default_factory=utc_now)
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    state: ExecutionState = ExecutionState.PENDING
+    attempt_count: int = Field(default=0, ge=0)
+    external_reference: str | None = Field(default=None, max_length=512)
+    provider_status: str | None = Field(default=None, max_length=120)
+    message: str = Field(
+        default="Execution claimed; provider outcome not yet recorded.",
+        min_length=1,
+        max_length=2_000,
+    )
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> ActionExecution:
+        if self.updated_at < self.created_at:
+            raise ValueError("execution updated_at cannot precede created_at")
+        if self.state is ExecutionState.PENDING:
+            if self.attempt_count != 0:
+                raise ValueError("pending execution cannot have provider attempts")
+            if self.external_reference is not None or self.provider_status is not None:
+                raise ValueError("pending execution cannot have provider result data")
+        elif self.attempt_count == 0:
+            raise ValueError("non-pending execution must have at least one provider attempt")
+        if (
+            self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}
+            and not self.external_reference
+        ):
+            raise ValueError("submitted or succeeded execution requires external reference")
+        return self
+
+
+class ExecutionResult(StrictModel):
+    state: ExecutionState
+    message: str = Field(min_length=1, max_length=2_000)
+    external_reference: str | None = Field(default=None, max_length=512)
+    provider_status: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_provider_result(self) -> ExecutionResult:
+        if self.state in {ExecutionState.PENDING, ExecutionState.IN_FLIGHT}:
+            raise ValueError("provider result cannot use an internal execution state")
+        if (
+            self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}
+            and not self.external_reference
+        ):
+            raise ValueError("submitted or succeeded provider result requires external reference")
+        return self
 
 
 class Outcome(StrictModel):
@@ -164,6 +221,12 @@ class PolicyDecision(StrictModel):
     disposition: Disposition
     reasons: tuple[str, ...]
     action_allowed: bool
+
+
+class AuditEventDraft(StrictModel):
+    event_type: str = Field(min_length=1, max_length=120)
+    entity_id: str = Field(min_length=1, max_length=320)
+    payload: dict[str, object]
 
 
 class AuditEvent(StrictModel):

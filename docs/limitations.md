@@ -1,12 +1,28 @@
 # Limitations
 
+- no live CRM, billing, email, or help-desk integration yet;
+- refund proposals do not yet bind to a real payment/charge object from a system of record;
+- repeated ingestion of the same support case is not yet deduplicated at the analysis boundary;
+  a second analysis creates a distinct resolution transaction and therefore a distinct external
+  idempotency key, so a production connector must not be enabled until case-level ingestion
+  identity is enforced;
+- provider-specific retry windows, webhook authenticity, and reconciliation semantics are not
+  validated until the first real adapter exists;
+- legacy pre-lifecycle SQLite databases with ambiguous execution history are rejected at startup
+  rather than guessed into the new state model; current-format execution rows can be backfilled
+  into the execution-claim index only after their approval/execution identity is verified;
 - lexical retrieval is intentionally small and inspectable;
-- no live CRM, billing, email, or help-desk integration;
-- no identity provider or multi-tenant authorization;
-- SQLite is single-node;
+- no identity provider or multi-tenant authorization boundary;
+- SQLite is a single-node persistence and coordination boundary;
 - the deterministic generator is a baseline, not a language model;
 - the optional web API is an adapter, not a complete product UI;
-- no production claim is made;
-- no externally anchored or signed audit head; a privileged database writer is outside the
-  current integrity boundary;
-- no safe autonomous-action path; all destructive actions are human-gated.
+- no production or customer-impact claim is made;
+- the audit chain is tamper-evident rather than independently tamper-proof; a privileged writer
+  remains outside the current integrity boundary;
+- destructive actions remain human-gated.
+
+The execution lifecycle prevents blind replay of one approved resolution transaction and can
+preserve/reconcile ambiguous local state. It does **not** yet provide case-ingestion idempotency,
+and it does not by itself guarantee idempotency at an external provider. The former must be fixed
+before a live action connector is enabled; the latter must be established by the specific
+adapter and provider contract.
