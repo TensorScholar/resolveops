@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -9,6 +10,7 @@ from resolveops.domain.models import (
     ActionProposal,
     ExecutionResult,
     ExecutionState,
+    PaymentSnapshot,
     Ticket,
 )
 
@@ -29,6 +31,38 @@ def test_extra_fields_rejected() -> None:
 def test_naive_timestamp_rejected() -> None:
     with pytest.raises(ValidationError):
         Ticket(customer_id="c", message="x", received_at=datetime.now())
+
+
+def test_payment_refund_total_cannot_exceed_payment_amount() -> None:
+    with pytest.raises(ValidationError, match="amount_refunded cannot exceed amount"):
+        PaymentSnapshot(
+            id="pay_1",
+            customer_id="c",
+            amount=Decimal("10.00"),
+            amount_refunded=Decimal("11.00"),
+            currency="usd",
+        )
+
+
+def test_payment_currency_must_be_lowercase_three_letter_code() -> None:
+    with pytest.raises(ValidationError):
+        PaymentSnapshot(
+            id="pay_1",
+            customer_id="c",
+            amount=Decimal("10.00"),
+            currency="USD",
+        )
+
+
+def test_payment_remaining_refundable_is_exact_decimal() -> None:
+    snapshot = PaymentSnapshot(
+        id="pay_1",
+        customer_id="c",
+        amount=Decimal("10.00"),
+        amount_refunded=Decimal("3.25"),
+        currency="usd",
+    )
+    assert snapshot.remaining_refundable == Decimal("6.75")
 
 
 def test_pending_execution_cannot_claim_provider_attempt() -> None:
