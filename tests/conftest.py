@@ -19,13 +19,19 @@ def billing_reader() -> MemoryBillingReader:
                 id="pay_cust_1",
                 customer_id="cust_1",
                 amount=Decimal("2000.00"),
+                amount_refunded=Decimal("0.00"),
                 currency="usd",
+                refundable=True,
+                status="succeeded",
             ),
             PaymentSnapshot(
                 id="pay_eval",
                 customer_id="eval-customer",
                 amount=Decimal("2000.00"),
+                amount_refunded=Decimal("0.00"),
                 currency="usd",
+                refundable=True,
+                status="succeeded",
             ),
         )
     )
