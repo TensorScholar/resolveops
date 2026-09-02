@@ -39,7 +39,10 @@ def sqlite_service(tmp_path) -> ResolveOpsService:
                     id="pay-c",
                     customer_id="c",
                     amount=Decimal("1000.00"),
+                    amount_refunded=Decimal("0.00"),
                     currency="usd",
+                    refundable=True,
+                    status="succeeded",
                 ),
             )
         ),
