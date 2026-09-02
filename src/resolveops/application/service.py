@@ -189,20 +189,15 @@ class ResolveOpsService:
 
     @staticmethod
     def _refund_action_is_bound(action: ActionProposal) -> bool:
-        return (
-            action.kind is not ActionKind.REFUND
-            or (
-                action.resource_kind is ActionResourceKind.PAYMENT
-                and action.resource_hash is not None
-                and action.currency is not None
-            )
+        return action.kind is not ActionKind.REFUND or (
+            action.resource_kind is ActionResourceKind.PAYMENT
+            and action.resource_hash is not None
+            and action.currency is not None
         )
 
     def _ensure_action_executable(self, action: ActionProposal) -> None:
         if not self._refund_action_is_bound(action):
-            raise PolicyDeniedError(
-                "refund action is not bound to a verified payment snapshot"
-            )
+            raise PolicyDeniedError("refund action is not bound to a verified payment snapshot")
 
     def _bind_refund_action(
         self,
