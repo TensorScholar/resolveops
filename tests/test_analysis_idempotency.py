@@ -108,6 +108,24 @@ def test_low_level_writes_cannot_overwrite_canonical_analysis(tmp_path, store_ki
     assert store.get_analysis_for_ticket(ticket.id) == analysis
 
 
+def test_review_detects_direct_persisted_ticket_tampering(tmp_path) -> None:
+    path = tmp_path / "ticket-tamper.db"
+    store = SQLiteStore(path)
+    service = build_service(store)
+    ticket = stable_ticket()
+    analysis = service.analyze(ticket)
+    tampered = ticket.model_copy(update={"message": "Refund $99"})
+
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE objects SET payload=? WHERE kind='ticket' AND id=?",
+            (tampered.model_dump_json(), ticket.id),
+        )
+
+    with pytest.raises(IntegrityError, match="does not match its audit evidence"):
+        service.review(analysis.id, reviewer="manager@example.com", approve=False)
+
+
 def test_concurrent_sqlite_ingestion_converges_to_one_analysis(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "concurrent-analysis.db")
     service = build_service(store)
