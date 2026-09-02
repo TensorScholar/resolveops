@@ -8,10 +8,47 @@ from enum import StrEnum
 from typing import Annotated
 from uuid import uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, WithJsonSchema, model_validator
 
-StrictMoney = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=12, decimal_places=2)]
-StrictCost = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=14, decimal_places=6)]
+_MONEY_JSON_SCHEMA = {
+    "anyOf": [
+        {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 10_000_000_000,
+            "multipleOf": 0.01,
+        },
+        {
+            "type": "string",
+            "pattern": r"^\+?(?=.*\d)0*(?:\d{1,10}|\d{0,10}\.\d{0,2}0*)$",
+        },
+    ]
+}
+_COST_JSON_SCHEMA = {
+    "anyOf": [
+        {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 100_000_000,
+            "multipleOf": 0.000001,
+        },
+        {
+            "type": "string",
+            "pattern": r"^\+?(?=.*\d)0*(?:\d{1,8}|\d{0,8}\.\d{0,6}0*)$",
+        },
+    ]
+}
+
+StrictMoney = Annotated[
+    Decimal,
+    Field(ge=Decimal("0"), max_digits=12, decimal_places=2),
+    WithJsonSchema(_MONEY_JSON_SCHEMA),
+]
+StrictCost = Annotated[
+    Decimal,
+    Field(ge=Decimal("0"), max_digits=14, decimal_places=6),
+    WithJsonSchema(_COST_JSON_SCHEMA),
+]
 CurrencyCode = Annotated[str, Field(pattern=r"^[a-z]{3}$")]
 ObjectDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -141,7 +178,7 @@ class Citation(StrictModel):
 
 class ActionProposal(StrictModel):
     kind: ActionKind
-    resource_id: str
+    resource_id: str = Field(min_length=1, max_length=320)
     resource_kind: ActionResourceKind = ActionResourceKind.CUSTOMER
     resource_hash: ObjectDigest | None = None
     amount: StrictMoney | None = None
