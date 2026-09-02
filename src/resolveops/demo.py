@@ -6,7 +6,13 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from resolveops.bootstrap import build_service
-from resolveops.domain.models import CustomerProfile, KnowledgeArticle, Outcome, Ticket
+from resolveops.domain.models import (
+    CustomerProfile,
+    ExecutionState,
+    KnowledgeArticle,
+    Outcome,
+    Ticket,
+)
 
 
 def run_demo(database: str | None = None) -> dict[str, object]:
@@ -46,7 +52,7 @@ def run_demo(database: str | None = None) -> dict[str, object]:
     service.record_outcome(
         Outcome(
             ticket_id=ticket.id,
-            resolved=bool(execution and execution.success),
+            resolved=bool(execution and execution.state is ExecutionState.SUCCEEDED),
             escalated=False,
             human_minutes=2,
             csat=5,
