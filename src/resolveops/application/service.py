@@ -67,6 +67,18 @@ class ResolveOpsService:
             raise IntegrityError("analysis record does not match its audit evidence")
         return events
 
+    def _verify_approval_integrity(self, approval: Approval) -> None:
+        events = self.store.list_audit()
+        verify_chain(events)
+        matches = [
+            event
+            for event in events
+            if event.event_type == "analysis.reviewed" and event.entity_id == approval.id
+        ]
+        expected = object_digest(approval.model_dump(mode="json"))
+        if len(matches) != 1 or matches[0].payload.get("approval_hash") != expected:
+            raise IntegrityError("approval record does not match its audit evidence")
+
     def _verify_execution_integrity(self, execution: ActionExecution) -> None:
         events = self.store.list_audit()
         verify_chain(events)
@@ -79,6 +91,15 @@ class ResolveOpsService:
         expected = object_digest(execution.model_dump(mode="json"))
         if not matches or matches[-1].payload.get("execution_hash") != expected:
             raise IntegrityError("execution record does not match its audit evidence")
+
+    def _approved_review_for_execution(self, execution: ActionExecution) -> Approval:
+        approval = self.store.get_approval(execution.approval_id)
+        if approval is None:
+            raise IntegrityError("execution does not have a persisted approval")
+        self._verify_approval_integrity(approval)
+        if approval.state is not ReviewState.APPROVED:
+            raise IntegrityError("execution does not have a valid approved review")
+        return approval
 
     def _current_citations(self, analysis: AnalysisResult) -> tuple[Citation, ...]:
         now = datetime.now(UTC)
@@ -236,6 +257,7 @@ class ResolveOpsService:
                 "state": approval.state.value,
                 "reviewer": reviewer,
                 "analysis_hash": object_digest(analysis.model_dump(mode="json")),
+                "approval_hash": object_digest(approval.model_dump(mode="json")),
             },
         )
 
@@ -284,6 +306,7 @@ class ResolveOpsService:
         if execution is None:
             raise NotFoundError(f"execution not found for analysis: {analysis_id}")
         self._verify_execution_integrity(execution)
+        self._approved_review_for_execution(execution)
         return execution
 
     def reconcile_execution(self, execution_id: str) -> ActionExecution:
@@ -291,11 +314,9 @@ class ResolveOpsService:
         if execution is None:
             raise NotFoundError(f"execution not found: {execution_id}")
         self._verify_execution_integrity(execution)
+        approval = self._approved_review_for_execution(execution)
         if execution.state.terminal:
             raise InvalidTransitionError("terminal execution does not require reconciliation")
-        approval = self.store.get_approval(execution.approval_id)
-        if approval is None or approval.state is not ReviewState.APPROVED:
-            raise IntegrityError("execution does not have a valid approved review")
         try:
             result = self.action_executor.reconcile(execution)
         except Exception:
