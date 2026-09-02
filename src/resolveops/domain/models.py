@@ -193,9 +193,7 @@ class ExecutionResult(StrictModel):
             self.state in {ExecutionState.SUBMITTED, ExecutionState.SUCCEEDED}
             and not self.external_reference
         ):
-            raise ValueError(
-                "submitted or succeeded provider result requires external reference"
-            )
+            raise ValueError("submitted or succeeded provider result requires external reference")
         return self
 
 
