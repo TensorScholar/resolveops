@@ -108,14 +108,16 @@ class MemoryStore:
         with self._lock:
             if approval.analysis_id in self._approval_by_analysis:
                 raise InvalidTransitionError("analysis has already been reviewed")
+            if execution is not None and (
+                execution.approval_id in self._execution_by_approval
+                or execution.analysis_id in self._execution_by_analysis
+                or execution.id in self.executions
+            ):
+                raise InvalidTransitionError("approved action already has an execution")
+
             self.approvals[approval.id] = approval
             self._approval_by_analysis[approval.analysis_id] = approval.id
             if execution is not None:
-                if (
-                    execution.approval_id in self._execution_by_approval
-                    or execution.analysis_id in self._execution_by_analysis
-                ):
-                    raise InvalidTransitionError("approved action already has an execution")
                 self.executions[execution.id] = execution
                 self._execution_by_approval[execution.approval_id] = execution.id
                 self._execution_by_analysis[execution.analysis_id] = execution.id
