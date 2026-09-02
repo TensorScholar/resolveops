@@ -43,20 +43,26 @@ become an external side effect.
 - retrieval accepts only approved, temporally valid knowledge and binds article content digests;
 - action parameters required by policy fail closed when ambiguous;
 - destructive actions remain human-gated;
-- persisted `AnalysisResult` content is bound into audit evidence;
+- persisted `AnalysisResult`, `Approval`, and `ActionExecution` content is bound into audit
+  evidence;
 - one review claim per analysis is enforced transactionally;
 - an approved review and its initial `pending` execution claim are committed atomically with
   audit events;
 - every execution receives a stable, non-sensitive idempotency key before any provider call;
+- before every executor or reconciliation invocation, ResolveOps durably transitions the
+  execution to `in_flight` and increments the attempt number;
+- a returned provider result completes that same attempt, so attempt counts do not double-count
+  the call/result pair;
 - transport exceptions are represented as `unknown`, not as definitive failures;
-- hard process termination after a provider call leaves a persisted `pending` execution that can
-  be reconciled after restart;
+- hard process termination after an external side effect leaves an auditable `in_flight`
+  execution that can be reconciled after restart;
+- a known external operation reference cannot silently change on a later transition;
 - execution updates preserve immutable approved action identity and monotonic attempt ordering;
 - persisted execution state is bound into the audit chain on every transition;
 - reconciliation is explicit and adapter-owned; the application does not create a fresh action
   identity for an uncertain operation;
 - SQLite audit allocation and review/execution transitions use serialized transactions;
-- malformed persisted models fail closed as integrity errors;
+- malformed or internally inconsistent persisted models fail closed as integrity errors;
 - repository secret/static-security checks run in CI;
 - the domain has no vendor SDK, network client, FastAPI, or SQLite dependency.
 
@@ -66,8 +72,12 @@ These controls do not make ResolveOps a production authorization or financial sy
 
 - A real provider must independently guarantee the idempotency and reconciliation behavior used
   by its adapter. The mock executor is only a deterministic reference implementation.
-- A provider operation can remain non-terminal (`submitted`) for an extended period. Production
-  integrations need webhooks or scheduled reconciliation and an operator policy for stale state.
+- Persisting `in_flight` before a provider call is conservative: a process can terminate after
+  the local transition but before the request reaches the provider. ResolveOps therefore knows
+  that an attempt may have started, not that the provider necessarily observed it.
+- A provider operation can remain non-terminal (`in_flight`, `submitted`, or `unknown`) for an
+  extended period. Production integrations need webhooks or scheduled reconciliation and an
+  operator policy for stale state.
 - The first real refund path still needs an explicit payment/charge target sourced from the
   billing system; a customer identifier alone is not a sufficient refund target.
 - Webhook authenticity, replay protection, secret rotation, rate limiting, authenticated
