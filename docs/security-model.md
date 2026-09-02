@@ -24,19 +24,21 @@ become an external side effect.
    without sufficient support.
 4. **Case-ingestion replay or identity collision** — the same support case is analyzed more than
    once into distinct resolution transactions, or one case ID is reused for changed content.
-5. **Approval replay** — an analysis is approved or rejected more than once.
-6. **Lost execution intent** — a process crashes after approval but before the operation is
+5. **Canonical-record mutation** — a lower-level persistence helper rewrites a ticket or analysis
+   after canonical ownership has been established.
+6. **Approval replay** — an analysis is approved or rejected more than once.
+7. **Lost execution intent** — a process crashes after approval but before the operation is
    durably represented.
-7. **Duplicate external side effect** — a retry creates a second refund/change/cancellation.
-8. **Ambiguous provider outcome** — the provider accepts the action but the response is lost.
-9. **Stale non-terminal state** — an accepted provider operation later fails or requires action
-   without ResolveOps reconciling it.
-10. **Persistence or concurrency faults** — stored models are malformed, attempts race, or audit
+8. **Duplicate external side effect** — a retry creates a second refund/change/cancellation.
+9. **Ambiguous provider outcome** — the provider accepts the action but the response is lost.
+10. **Stale non-terminal state** — an accepted provider operation later fails or requires action
+    without ResolveOps reconciling it.
+11. **Persistence or concurrency faults** — stored models are malformed, attempts race, or audit
     sequence allocation collides.
-11. **Audit mutation** — retained events are edited, reordered, or truncated.
-12. **Sensitive-data leakage** — logs, fixtures, keys, or repository content expose secrets or
+12. **Audit mutation** — retained events are edited, reordered, or truncated.
+13. **Sensitive-data leakage** — logs, fixtures, keys, or repository content expose secrets or
     customer information.
-13. **Boundary confusion** — ResolveOps is treated as a credential gateway, billing ledger, or
+14. **Boundary confusion** — ResolveOps is treated as a credential gateway, billing ledger, or
     horizontally scalable coordination service.
 
 ## Current controls
@@ -51,6 +53,11 @@ become an external side effect.
   committed atomically on application ingestion;
 - identical case replays converge on the canonical analysis, while reuse of a ticket ID with
   changed content fails closed;
+- low-level ticket/analysis helper writes cannot mutate objects after a canonical analysis claim
+  owns them;
+- analysis-claim backfill requires audit evidence that binds both the exact ticket digest and
+  exact analysis digest; older audit history without ticket-payload binding is rejected rather
+  than inferred;
 - ambiguous legacy history containing multiple analyses for one ticket is rejected instead of
   guessing which resolution transaction should become canonical;
 - persisted `AnalysisResult`, `Approval`, and `ActionExecution` content is bound into audit
@@ -84,6 +91,9 @@ These controls do not make ResolveOps a production authorization or financial sy
 - Case-level canonicalization uses immutable `Ticket.id` plus exact content; mutable upstream
   cases need an explicit revision/event identity contract rather than silent in-place reuse of
   the same ID.
+- Exact replay returns the historical canonical resolution transaction and intentionally does not
+  re-run mutable customer-profile validation. Authentication, authorization, and upstream
+  revision semantics must be enforced at their own integration boundaries.
 - Concurrent duplicate ingestion can still repeat pre-persistence analysis computation before
   the serialized store transaction selects the canonical analysis; this wastes compute but does
   not create a second persisted resolution transaction.
