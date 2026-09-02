@@ -8,6 +8,7 @@ import pytest
 
 from resolveops.adapters.actions import MockActionExecutor
 from resolveops.adapters.generator import DeterministicResponseGenerator
+from resolveops.adapters.memory import MemoryStore
 from resolveops.adapters.sqlite import SQLiteStore
 from resolveops.application.service import ResolveOpsService
 from resolveops.domain.audit import make_event, object_digest
@@ -22,7 +23,7 @@ from resolveops.domain.models import (
 )
 
 
-def build_service(store: SQLiteStore) -> ResolveOpsService:
+def build_service(store: SQLiteStore | MemoryStore) -> ResolveOpsService:
     service = ResolveOpsService(
         store=store,
         generator=DeterministicResponseGenerator(),
@@ -85,6 +86,26 @@ def test_same_ticket_id_with_different_content_fails_closed(service) -> None:
     assert service.store.get_analysis_for_ticket(ticket.id) == first
     assert service.store.get_ticket(ticket.id) == ticket
     assert service.store.list_analyses() == [first]
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_low_level_writes_cannot_overwrite_canonical_analysis(tmp_path, store_kind: str) -> None:
+    store = (
+        MemoryStore()
+        if store_kind == "memory"
+        else SQLiteStore(tmp_path / "canonical-write-protection.db")
+    )
+    service = build_service(store)
+    ticket = stable_ticket()
+    analysis = service.analyze(ticket)
+
+    with pytest.raises(IntegrityError, match="canonical ticket cannot be overwritten"):
+        store.put_ticket(ticket.model_copy(update={"message": "Refund $99"}))
+    with pytest.raises(IntegrityError, match="canonical analysis cannot be overwritten"):
+        store.put_analysis(analysis.model_copy(update={"summary": "mutated"}))
+
+    assert store.get_ticket(ticket.id) == ticket
+    assert store.get_analysis_for_ticket(ticket.id) == analysis
 
 
 def test_concurrent_sqlite_ingestion_converges_to_one_analysis(tmp_path) -> None:
@@ -168,21 +189,7 @@ def _legacy_analysis(ticket: Ticket, analysis_id: str) -> AnalysisResult:
     )
 
 
-def test_upgrade_backfills_one_audited_legacy_analysis_claim(tmp_path) -> None:
-    path = tmp_path / "legacy-analysis.db"
-    _create_pre_claim_schema(path)
-    ticket = stable_ticket()
-    analysis = _legacy_analysis(ticket, "ana-legacy")
-    event = make_event(
-        sequence=1,
-        event_type="ticket.analyzed",
-        entity_id=analysis.id,
-        payload={
-            "ticket_id": ticket.id,
-            "analysis_hash": object_digest(analysis.model_dump(mode="json")),
-        },
-        previous_hash="0" * 64,
-    )
+def _persist_pre_claim_analysis(path, ticket: Ticket, analysis: AnalysisResult, event) -> None:
     with sqlite3.connect(path) as connection:
         connection.execute(
             "INSERT INTO objects(kind,id,payload) VALUES('ticket',?,?)",
@@ -197,9 +204,49 @@ def test_upgrade_backfills_one_audited_legacy_analysis_claim(tmp_path) -> None:
             (event.sequence, event.model_dump_json()),
         )
 
+
+def test_upgrade_backfills_only_exactly_bound_analysis_claim(tmp_path) -> None:
+    path = tmp_path / "bound-analysis.db"
+    _create_pre_claim_schema(path)
+    ticket = stable_ticket()
+    analysis = _legacy_analysis(ticket, "ana-bound")
+    event = make_event(
+        sequence=1,
+        event_type="ticket.analyzed",
+        entity_id=analysis.id,
+        payload={
+            "ticket_id": ticket.id,
+            "ticket_hash": object_digest(ticket.model_dump(mode="json")),
+            "analysis_hash": object_digest(analysis.model_dump(mode="json")),
+        },
+        previous_hash="0" * 64,
+    )
+    _persist_pre_claim_analysis(path, ticket, analysis, event)
+
     store = SQLiteStore(path)
 
     assert store.get_analysis_for_ticket(ticket.id) == analysis
+
+
+def test_upgrade_rejects_legacy_analysis_without_ticket_payload_binding(tmp_path) -> None:
+    path = tmp_path / "unbound-legacy-analysis.db"
+    _create_pre_claim_schema(path)
+    ticket = stable_ticket()
+    analysis = _legacy_analysis(ticket, "ana-unbound")
+    event = make_event(
+        sequence=1,
+        event_type="ticket.analyzed",
+        entity_id=analysis.id,
+        payload={
+            "ticket_id": ticket.id,
+            "analysis_hash": object_digest(analysis.model_dump(mode="json")),
+        },
+        previous_hash="0" * 64,
+    )
+    _persist_pre_claim_analysis(path, ticket, analysis, event)
+
+    with pytest.raises(IntegrityError, match="exact ticket and analysis audit evidence"):
+        SQLiteStore(path)
 
 
 def test_upgrade_rejects_multiple_legacy_analyses_for_one_ticket(tmp_path) -> None:
