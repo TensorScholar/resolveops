@@ -13,10 +13,13 @@ from resolveops.adapters.sqlite import SQLiteStore
 from resolveops.application.service import ResolveOpsService
 from resolveops.domain.errors import IntegrityError, InvalidTransitionError, PolicyDeniedError
 from resolveops.domain.models import (
+    ActionExecution,
     ActionProposal,
     Approval,
     CustomerProfile,
     Disposition,
+    ExecutionResult,
+    ExecutionState,
     KnowledgeArticle,
     Ticket,
 )
@@ -134,10 +137,18 @@ def test_audit_review_record_blocks_replay_if_claim_is_deleted(tmp_path) -> None
 
 class ExplodingExecutor:
     def execute(
-        self, action: ActionProposal, *, approval: Approval
-    ) -> tuple[bool, str, str | None]:
-        del action, approval
+        self,
+        action: ActionProposal,
+        *,
+        approval: Approval,
+        idempotency_key: str,
+    ) -> ExecutionResult:
+        del action, approval, idempotency_key
         raise RuntimeError("simulated untrusted adapter failure")
+
+    def reconcile(self, execution: ActionExecution) -> ExecutionResult:
+        del execution
+        raise RuntimeError("simulated reconciliation failure")
 
 
 def test_executor_exception_is_recorded_without_blind_retry(service) -> None:
@@ -151,7 +162,8 @@ def test_executor_exception_is_recorded_without_blind_retry(service) -> None:
         approve=True,
     )
     assert execution is not None
-    assert not execution.success
+    assert execution.state is ExecutionState.UNKNOWN
+    assert execution.attempt_count == 1
     assert execution.external_reference is None
     assert "unknown" in execution.message.casefold()
 
