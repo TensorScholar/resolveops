@@ -133,6 +133,21 @@ class ResolveOpsService:
         return tuple(current)
 
     @staticmethod
+    def _analysis_audit(ticket: Ticket, analysis: AnalysisResult) -> AuditEventDraft:
+        return AuditEventDraft(
+            event_type="ticket.analyzed",
+            entity_id=analysis.id,
+            payload={
+                "ticket_id": ticket.id,
+                "ticket_hash": object_digest(ticket.model_dump(mode="json")),
+                "intent": analysis.intent.value,
+                "disposition": analysis.disposition.value,
+                "citation_ids": [item.article_id for item in analysis.citations],
+                "analysis_hash": object_digest(analysis.model_dump(mode="json")),
+            },
+        )
+
+    @staticmethod
     def _execution_audit(execution: ActionExecution, event_type: str) -> AuditEventDraft:
         return AuditEventDraft(
             event_type=event_type,
@@ -181,10 +196,27 @@ class ResolveOpsService:
         self.store.put_article(article)
 
     def analyze(self, ticket: Ticket) -> AnalysisResult:
+        incoming_ticket_hash = object_digest(ticket.model_dump(mode="json"))
+        existing = self.store.get_analysis_for_ticket(ticket.id)
+        if existing is not None:
+            persisted_ticket = self.store.get_ticket(ticket.id)
+            if persisted_ticket is None:
+                raise IntegrityError("analysis claim references a missing ticket")
+            if object_digest(persisted_ticket.model_dump(mode="json")) != incoming_ticket_hash:
+                raise IntegrityError("ticket id is already bound to different content")
+            self._verify_analysis_integrity(existing)
+            return existing
+
+        persisted_ticket = self.store.get_ticket(ticket.id)
+        if (
+            persisted_ticket is not None
+            and object_digest(persisted_ticket.model_dump(mode="json")) != incoming_ticket_hash
+        ):
+            raise IntegrityError("ticket id is already bound to different content")
+
         customer = self.store.get_customer(ticket.customer_id)
         if customer is None:
             raise NotFoundError(f"customer not found: {ticket.customer_id}")
-        self.store.put_ticket(ticket)
         intent = classify_intent(ticket.message)
         action = propose_action(ticket, intent)
         citations = retrieve(ticket.message, self.store.list_articles())
@@ -211,19 +243,14 @@ class ResolveOpsService:
             disposition_reasons=decision.reasons,
             proposed_action=action,
         )
-        self.store.put_analysis(analysis)
-        self._audit(
-            "ticket.analyzed",
-            analysis.id,
-            {
-                "ticket_id": ticket.id,
-                "intent": intent.value,
-                "disposition": analysis.disposition.value,
-                "citation_ids": [item.article_id for item in citations],
-                "analysis_hash": object_digest(analysis.model_dump(mode="json")),
-            },
+        persisted = self.store.record_analysis(
+            ticket,
+            analysis,
+            audit_event=self._analysis_audit(ticket, analysis),
         )
-        return analysis
+        if persisted.id != analysis.id:
+            self._verify_analysis_integrity(persisted)
+        return persisted
 
     def review(
         self,
