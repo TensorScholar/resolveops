@@ -30,6 +30,20 @@
       "title": "Message",
       "type": "string"
     },
+    "payment_reference": {
+      "anyOf": [
+        {
+          "maxLength": 320,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Payment Reference"
+    },
     "received_at": {
       "format": "date-time",
       "title": "Received At",
