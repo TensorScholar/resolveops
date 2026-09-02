@@ -6,10 +6,11 @@ from resolveops.domain.models import (
     CustomerProfile,
     KnowledgeArticle,
     Outcome,
+    PaymentSnapshot,
     Ticket,
 )
 
-MODELS = [Ticket, CustomerProfile, KnowledgeArticle, AnalysisResult, Outcome]
+MODELS = [Ticket, CustomerProfile, PaymentSnapshot, KnowledgeArticle, AnalysisResult, Outcome]
 target = Path("schemas")
 target.mkdir(exist_ok=True)
 for model in MODELS:
