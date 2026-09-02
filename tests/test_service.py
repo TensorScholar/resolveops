@@ -92,6 +92,15 @@ def test_unknown_refund_amount_cannot_be_approved(service) -> None:
     assert service.store.list_executions() == []
 
 
+def test_distinct_refund_amounts_cannot_be_approved(service) -> None:
+    analysis = service.analyze(refund_ticket("Charged $100; please refund $20"))
+    assert analysis.proposed_action is not None
+    assert analysis.proposed_action.amount is None
+    with pytest.raises(PolicyDeniedError, match="refund_amount_unknown"):
+        service.review(analysis.id, reviewer="manager@example.com", approve=True)
+    assert service.store.list_executions() == []
+
+
 def test_missing_evidence_action_cannot_be_approved(service) -> None:
     analysis = service.analyze(refund_ticket("Refund $49"))
     assert analysis.disposition is Disposition.REVIEW_REQUIRED
