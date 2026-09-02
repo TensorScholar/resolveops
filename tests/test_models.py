@@ -42,10 +42,11 @@ def test_pending_execution_cannot_claim_provider_attempt() -> None:
         )
 
 
-def test_provider_result_cannot_return_pending() -> None:
-    with pytest.raises(ValidationError, match="pending is reserved"):
+@pytest.mark.parametrize("state", [ExecutionState.PENDING, ExecutionState.IN_FLIGHT])
+def test_provider_result_cannot_return_internal_state(state: ExecutionState) -> None:
+    with pytest.raises(ValidationError, match="provider result cannot use an internal"):
         ExecutionResult(
-            state=ExecutionState.PENDING,
+            state=state,
             message="invalid provider state",
         )
 
