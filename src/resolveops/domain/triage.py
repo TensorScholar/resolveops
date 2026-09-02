@@ -33,12 +33,17 @@ def classify_intent(message: str) -> IntentKind:
 
 
 def extract_refund_request(message: str) -> tuple[Decimal | None, str | None]:
-    """Extract only explicit USD-denominated money; never infer an unmarked number."""
-    match = _MONEY.search(message)
-    if match is None:
+    """Extract one unambiguous explicit USD amount; never guess among distinct values."""
+    matches = list(_MONEY.finditer(message))
+    if not matches:
         return None, None
-    amount = Decimal(match.group("amount")).quantize(Decimal("0.01"))
-    return amount, "usd"
+
+    amounts = {
+        Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches
+    }
+    if len(amounts) != 1:
+        return None, "usd"
+    return next(iter(amounts)), "usd"
 
 
 def propose_action(ticket: Ticket, intent: IntentKind) -> ActionProposal | None:
