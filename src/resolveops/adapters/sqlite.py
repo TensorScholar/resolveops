@@ -112,8 +112,8 @@ class SQLiteStore:
         ).fetchall()
         claims_by_ticket: dict[str, tuple[str, str]] = {}
         for ticket_id, analysis_id, ticket_hash in claim_rows:
-            analysis = analyses.get(analysis_id)
-            if analysis is None or analysis.ticket_id != ticket_id:
+            claimed_analysis = analyses.get(analysis_id)
+            if claimed_analysis is None or claimed_analysis.ticket_id != ticket_id:
                 raise IntegrityError("analysis claim does not match a persisted analysis")
             ticket_row = connection.execute(
                 "SELECT payload FROM objects WHERE kind='ticket' AND id=?",
