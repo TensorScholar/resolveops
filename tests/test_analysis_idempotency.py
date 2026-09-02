@@ -108,6 +108,24 @@ def test_low_level_writes_cannot_overwrite_canonical_analysis(tmp_path, store_ki
     assert store.get_analysis_for_ticket(ticket.id) == analysis
 
 
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_low_level_identical_canonical_writes_are_idempotent(tmp_path, store_kind: str) -> None:
+    store = (
+        MemoryStore()
+        if store_kind == "memory"
+        else SQLiteStore(tmp_path / "canonical-identical-writes.db")
+    )
+    service = build_service(store)
+    ticket = stable_ticket()
+    analysis = service.analyze(ticket)
+
+    store.put_ticket(Ticket.model_validate(ticket.model_dump()))
+    store.put_analysis(AnalysisResult.model_validate(analysis.model_dump()))
+
+    assert store.get_ticket(ticket.id) == ticket
+    assert store.get_analysis_for_ticket(ticket.id) == analysis
+
+
 def test_review_detects_direct_persisted_ticket_tampering(tmp_path) -> None:
     path = tmp_path / "ticket-tamper.db"
     store = SQLiteStore(path)
