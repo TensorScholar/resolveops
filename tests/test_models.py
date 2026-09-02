@@ -33,6 +33,23 @@ def test_naive_timestamp_rejected() -> None:
         Ticket(customer_id="c", message="x", received_at=datetime.now())
 
 
+@pytest.mark.parametrize("missing", ["amount_refunded", "refundable", "status"])
+def test_payment_safety_state_is_required(missing: str) -> None:
+    payload: dict[str, object] = {
+        "id": "pay_1",
+        "customer_id": "c",
+        "amount": Decimal("10.00"),
+        "amount_refunded": Decimal("0.00"),
+        "currency": "usd",
+        "refundable": True,
+        "status": "succeeded",
+    }
+    payload.pop(missing)
+
+    with pytest.raises(ValidationError):
+        PaymentSnapshot.model_validate(payload)
+
+
 def test_payment_refund_total_cannot_exceed_payment_amount() -> None:
     with pytest.raises(ValidationError, match="amount_refunded cannot exceed amount"):
         PaymentSnapshot(
@@ -41,6 +58,8 @@ def test_payment_refund_total_cannot_exceed_payment_amount() -> None:
             amount=Decimal("10.00"),
             amount_refunded=Decimal("11.00"),
             currency="usd",
+            refundable=True,
+            status="succeeded",
         )
 
 
@@ -50,7 +69,10 @@ def test_payment_currency_must_be_lowercase_three_letter_code() -> None:
             id="pay_1",
             customer_id="c",
             amount=Decimal("10.00"),
+            amount_refunded=Decimal("0.00"),
             currency="USD",
+            refundable=True,
+            status="succeeded",
         )
 
 
@@ -61,6 +83,8 @@ def test_payment_remaining_refundable_is_exact_decimal() -> None:
         amount=Decimal("10.00"),
         amount_refunded=Decimal("3.25"),
         currency="usd",
+        refundable=True,
+        status="succeeded",
     )
     assert snapshot.remaining_refundable == Decimal("6.75")
 
