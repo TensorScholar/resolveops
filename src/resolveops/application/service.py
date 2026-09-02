@@ -209,6 +209,8 @@ class ResolveOpsService:
         payment = self.billing_reader.get_payment(ticket.payment_reference)
         if payment is None:
             return None, ("refund_payment_target_not_found",), Disposition.ESCALATE
+        if payment.id != ticket.payment_reference:
+            raise IntegrityError("billing reader returned a payment with mismatched identity")
         if payment.customer_id != ticket.customer_id:
             return None, ("refund_payment_ownership_mismatch",), Disposition.DENY
         if not payment.refundable or payment.remaining_refundable <= Decimal("0"):
