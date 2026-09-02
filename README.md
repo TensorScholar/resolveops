@@ -56,8 +56,12 @@ agent traces.
 - deterministic business policy separated from response generation;
 - refund proposals bound to one explicit billing-system payment identity and normalized payment
   snapshot digest rather than to a customer or heuristically selected charge;
+- exact billing lookup identity checks plus required explicit refunded amount, refundability, and
+  provider status in normalized payment snapshots—no optimistic financial-state defaults;
 - ownership, currency, refundability, and remaining-refundable checks before a refund proposal is
   reviewable, plus payment-state revalidation at approval time;
+- conservative refund-amount extraction that refuses to guess among distinct explicit money
+  values in one customer message;
 - explicit plan-change and cancellation proposals;
 - mandatory human review for destructive actions in the current development line;
 - one atomic review transition that also claims the approved execution intent;
@@ -121,8 +125,11 @@ High-impact actions are deliberately constrained:
 - stale, revoked, future-dated, or mutated evidence fails closed for approval;
 - a refund requires an explicit payment reference and cannot be targeted by customer-level or
   latest-payment heuristics;
+- the billing reader must return the exact requested payment identity, and safety-relevant payment
+  state is required rather than defaulted;
 - refund ownership, current normalized payment state, currency, and remaining refundable amount
   are checked before approval/execution;
+- distinct explicit refund-related money values are treated as ambiguous rather than guessed;
 - ambiguous action parameters fail closed;
 - destructive actions require explicit human review in the current development line;
 - approval and execution intent are persisted together so a process crash cannot lose the
