@@ -15,27 +15,26 @@ ResolveOps is intentionally narrow. The roadmap prioritizes evidence from real r
 - reproducible engineering and release validation.
 
 Post-RC development has added crash-safe action lifecycle/reconciliation, canonical case-ingestion
-idempotency, explicit refund payment-target binding, and a deterministic Stripe refund transaction
-slice with append-only post-action outcome verification. These changes are not part of the frozen
-`0.1.0rc2` validation record.
+idempotency, explicit refund payment-target binding, and a deterministic non-Connect USD Stripe
+Charge refund transaction slice with append-only post-action outcome verification. These changes are
+not part of the frozen `0.1.0rc2` validation record.
 
 ## Next milestones
 
-1. finish and merge the narrow non-Connect USD Stripe Charge refund adapter behind the existing
-   `BillingReader`, `ActionExecutor`, and action-outcome verification contracts without widening
-   refund targeting into customer-level payment search;
-2. validate provider authentication, current-state enforcement, idempotency retention, timeout,
-   ambiguous-response, refund retrieval, lifecycle reconciliation, and partial-refund behavior in
-   Stripe test mode, retaining evidence that distinguishes provider facts from deterministic mocks;
-3. add an authenticated webhook ingestion boundary with signature verification and replay handling
-   before asynchronous provider events can affect production outcome state;
-4. run one narrowly scoped pilot using sanitized, synthetic, or customer-owned data and measure
+1. validate provider authentication, current-state enforcement, idempotency retention, timeout,
+   ambiguous-response recovery, exact refund retrieval, lifecycle reconciliation, and partial-refund
+   behavior in Stripe test mode, retaining evidence that distinguishes provider facts from
+   deterministic mocks;
+2. add an authenticated webhook ingestion boundary with signature verification, event-to-refund
+   binding, idempotent event processing, and replay handling before asynchronous provider events can
+   affect production outcome state;
+3. run one narrowly scoped pilot using sanitized, synthetic, or customer-owned data and measure
    successful-resolution rate, reconciliation burden, post-action verification lag, repeat-contact
    proxy, and cost per successful resolution;
-5. add the deployment identity/authorization boundary required by the connector, delegating runtime
+4. add the deployment identity/authorization boundary required by the connector, delegating runtime
    credential/action binding to AgentGuard where appropriate rather than duplicating it;
-6. address reliability and product-quality findings from the pilot;
-7. protect `main` with required CI/review governance, rehearse the release path, freeze a new
+5. address reliability and product-quality findings from the Stripe evidence run and pilot;
+6. protect `main` with required CI/review governance, rehearse the release path, freeze a new
    release-candidate validation record, and cut a stable `0.1.0` only when the external evidence
    supports it.
 
