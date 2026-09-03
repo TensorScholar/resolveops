@@ -27,6 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
+stripe = ["stripe>=15.6,<16"]
 dev = [
   "build>=1.2,<2",
   "coverage>=7.6,<8",
