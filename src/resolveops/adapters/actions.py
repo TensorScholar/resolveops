@@ -30,7 +30,8 @@ class MockActionExecutor:
         reference_suffix = idempotency_key.removeprefix("ro_")[:24]
         if action.kind is ActionKind.REFUND:
             if (
-                action.resource_kind is not ActionResourceKind.PAYMENT
+                not action.resource_id
+                or action.resource_kind is not ActionResourceKind.PAYMENT
                 or action.resource_hash is None
                 or action.currency is None
             ):
