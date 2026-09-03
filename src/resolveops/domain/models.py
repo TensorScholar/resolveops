@@ -119,6 +119,7 @@ class Ticket(StrictModel):
     message: str = Field(min_length=1, max_length=20_000)
     channel: Channel = Channel.WEB
     payment_reference: str | None = Field(default=None, min_length=1, max_length=320)
+    billing_customer_reference: str | None = Field(default=None, min_length=1, max_length=320)
     received_at: AwareDatetime = Field(default_factory=utc_now)
 
 
