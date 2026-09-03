@@ -30,7 +30,7 @@
         {
           "exclusiveMaximum": 100000000,
           "minimum": 0,
-          "multipleOf": 0.000001,
+          "multipleOf": 1e-06,
           "type": "number"
         },
         {
