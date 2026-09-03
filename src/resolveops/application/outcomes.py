@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from resolveops.domain.audit import object_digest, verify_chain
 from resolveops.domain.errors import IntegrityError, InvalidTransitionError, NotFoundError
 from resolveops.domain.models import ActionExecution, ReviewState
@@ -10,7 +12,7 @@ from resolveops.domain.outcomes import (
     ActionOutcomeResult,
     ActionOutcomeState,
 )
-from resolveops.ports.interfaces import ActionOutcomeVerifier, Store
+from resolveops.ports.interfaces import ActionOutcomeVerifier, IdempotentAuditStore, Store
 
 
 class ActionOutcomeService:
@@ -81,7 +83,8 @@ class ActionOutcomeService:
         result: ActionOutcomeResult,
         *,
         audit_metadata: dict[str, object] | None = None,
-    ) -> ActionOutcomeObservation:
+        unique_event_key: str | None = None,
+    ) -> ActionOutcomeObservation | None:
         observation = ActionOutcomeObservation(
             execution_id=execution.id,
             state=result.state,
@@ -103,8 +106,17 @@ class ActionOutcomeService:
         }
         if audit_metadata:
             payload.update(audit_metadata)
-        self.store.append_audit_event("action.outcome_observed", execution.id, payload)
-        return observation
+        if unique_event_key is None:
+            self.store.append_audit_event("action.outcome_observed", execution.id, payload)
+            return observation
+        event_store = cast(IdempotentAuditStore, self.store)
+        event = event_store.append_audit_event_once(
+            unique_event_key,
+            "action.outcome_observed",
+            execution.id,
+            payload,
+        )
+        return observation if event is not None else None
 
     def observe(self, execution_id: str) -> ActionOutcomeObservation:
         """Append one current provider observation for an already-identified operation."""
@@ -123,7 +135,9 @@ class ActionOutcomeService:
                 provider_status=execution.provider_status,
                 message="Outcome verification failed; provider state requires investigation.",
             )
-        return self._record_result(execution, result)
+        observation = self._record_result(execution, result)
+        assert observation is not None
+        return observation
 
     def observe_external(
         self,
@@ -132,7 +146,8 @@ class ActionOutcomeService:
         stripe_event_id: str,
         stripe_event_type: str,
         stripe_signature_timestamp: int,
-    ) -> ActionOutcomeObservation:
+        unique_event_key: str,
+    ) -> ActionOutcomeObservation | None:
         """Use an authenticated Stripe event only as a trigger for an exact current-state read."""
         execution = self._verified_execution(execution_id)
         if execution.external_reference is None:
@@ -156,6 +171,7 @@ class ActionOutcomeService:
                 "stripe_event_type": stripe_event_type,
                 "stripe_signature_timestamp": stripe_signature_timestamp,
             },
+            unique_event_key=unique_event_key,
         )
 
     def list_observations(self, execution_id: str) -> list[ActionOutcomeObservation]:
