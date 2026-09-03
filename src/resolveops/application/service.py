@@ -199,6 +199,10 @@ class ResolveOpsService:
         if not self._refund_action_is_bound(action):
             raise PolicyDeniedError("refund action is not bound to a verified payment snapshot")
 
+    @staticmethod
+    def _expected_billing_customer(ticket: Ticket) -> str:
+        return ticket.billing_customer_reference or ticket.customer_id
+
     def _bind_refund_action(
         self,
         ticket: Ticket,
@@ -211,7 +215,7 @@ class ResolveOpsService:
             return None, ("refund_payment_target_not_found",), Disposition.ESCALATE
         if payment.id != ticket.payment_reference:
             raise IntegrityError("billing reader returned a payment with mismatched identity")
-        if payment.customer_id != ticket.customer_id:
+        if payment.customer_id != self._expected_billing_customer(ticket):
             return None, ("refund_payment_ownership_mismatch",), Disposition.DENY
         if not payment.refundable or payment.remaining_refundable <= Decimal("0"):
             return None, ("refund_payment_not_refundable",), Disposition.DENY
@@ -249,7 +253,7 @@ class ResolveOpsService:
             raise PolicyDeniedError("refund payment target is no longer available")
         if payment.id != action.resource_id:
             raise IntegrityError("billing reader returned a payment with mismatched identity")
-        if payment.customer_id != ticket.customer_id:
+        if payment.customer_id != self._expected_billing_customer(ticket):
             raise PolicyDeniedError("refund payment ownership changed before approval")
         if object_digest(payment.model_dump(mode="json")) != action.resource_hash:
             raise PolicyDeniedError("refund payment state changed; re-analysis is required")
