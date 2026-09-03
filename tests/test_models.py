@@ -1,6 +1,6 @@
+import re
 from datetime import datetime
 from decimal import Decimal
-import re
 
 import pytest
 from pydantic import ValidationError
