@@ -19,3 +19,11 @@ class PolicyDeniedError(ResolveOpsError):
 
 class IntegrityError(ResolveOpsError):
     """Stored evidence or audit data failed integrity validation."""
+
+
+class IntegrationContractError(ResolveOpsError):
+    """An external system could not satisfy a required ResolveOps data contract."""
+
+
+class ExternalDependencyError(ResolveOpsError):
+    """An external integration was unavailable or could not be queried safely."""
