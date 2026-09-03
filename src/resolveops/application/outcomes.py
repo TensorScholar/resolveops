@@ -75,6 +75,37 @@ class ActionOutcomeService:
         if observation.provider_reference != execution.external_reference:
             raise IntegrityError("outcome observation references a different provider operation")
 
+    def _record_result(
+        self,
+        execution: ActionExecution,
+        result: ActionOutcomeResult,
+        *,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> ActionOutcomeObservation:
+        observation = ActionOutcomeObservation(
+            execution_id=execution.id,
+            state=result.state,
+            provider_reference=result.provider_reference,
+            provider_status=result.provider_status,
+            customer_reference=result.customer_reference,
+            message=result.message,
+        )
+        self._validate_observation_identity(execution, observation)
+        payload: dict[str, object] = {
+            "execution_id": execution.id,
+            "provider_reference": observation.provider_reference,
+            "state": observation.state.value,
+            "provider_status": observation.provider_status,
+            "action_hash": object_digest(execution.action.model_dump(mode="json")),
+            "idempotency_key_hash": object_digest(execution.idempotency_key),
+            "observation": observation.model_dump(mode="json"),
+            "observation_hash": object_digest(observation.model_dump(mode="json")),
+        }
+        if audit_metadata:
+            payload.update(audit_metadata)
+        self.store.append_audit_event("action.outcome_observed", execution.id, payload)
+        return observation
+
     def observe(self, execution_id: str) -> ActionOutcomeObservation:
         """Append one current provider observation for an already-identified operation."""
         execution = self._verified_execution(execution_id)
@@ -92,31 +123,40 @@ class ActionOutcomeService:
                 provider_status=execution.provider_status,
                 message="Outcome verification failed; provider state requires investigation.",
             )
+        return self._record_result(execution, result)
 
-        observation = ActionOutcomeObservation(
-            execution_id=execution.id,
-            state=result.state,
-            provider_reference=result.provider_reference,
-            provider_status=result.provider_status,
-            customer_reference=result.customer_reference,
-            message=result.message,
-        )
-        self._validate_observation_identity(execution, observation)
-        self.store.append_audit_event(
-            "action.outcome_observed",
-            execution.id,
-            {
-                "execution_id": execution.id,
-                "provider_reference": observation.provider_reference,
-                "state": observation.state.value,
-                "provider_status": observation.provider_status,
-                "action_hash": object_digest(execution.action.model_dump(mode="json")),
-                "idempotency_key_hash": object_digest(execution.idempotency_key),
-                "observation": observation.model_dump(mode="json"),
-                "observation_hash": object_digest(observation.model_dump(mode="json")),
+    def observe_external(
+        self,
+        execution_id: str,
+        *,
+        stripe_event_id: str,
+        stripe_event_type: str,
+        stripe_signature_timestamp: int,
+    ) -> ActionOutcomeObservation:
+        """Use an authenticated Stripe event only as a trigger for an exact current-state read."""
+        execution = self._verified_execution(execution_id)
+        if execution.external_reference is None:
+            raise InvalidTransitionError(
+                "execution must be reconciled to an external reference before outcome verification"
+            )
+        try:
+            result = self.verifier.verify(execution)
+        except Exception:
+            result = ActionOutcomeResult(
+                state=ActionOutcomeState.UNKNOWN,
+                provider_reference=execution.external_reference,
+                provider_status=execution.provider_status,
+                message="Webhook-triggered outcome verification failed; investigation is required.",
+            )
+        return self._record_result(
+            execution,
+            result,
+            audit_metadata={
+                "stripe_event_id": stripe_event_id,
+                "stripe_event_type": stripe_event_type,
+                "stripe_signature_timestamp": stripe_signature_timestamp,
             },
         )
-        return observation
 
     def list_observations(self, execution_id: str) -> list[ActionOutcomeObservation]:
         """Return verified append-only observations in audit-sequence order."""
