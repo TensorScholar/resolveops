@@ -39,9 +39,7 @@ def extract_refund_request(message: str) -> tuple[Decimal | None, str | None]:
         return None, None
 
     try:
-        amounts = {
-            Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches
-        }
+        amounts = {Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches}
     except InvalidOperation:
         # The message still explicitly names USD, but the amount is outside the supported
         # decimal envelope. Preserve the currency signal while making the amount non-executable.
