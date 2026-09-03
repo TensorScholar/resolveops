@@ -98,6 +98,26 @@ def test_executor_rejects_ambiguous_actions() -> None:
     assert plan.state is ExecutionState.FAILED and plan.external_reference is None
 
 
+def test_executor_rejects_empty_refund_target_even_if_validation_is_bypassed() -> None:
+    corrupted = ActionProposal.model_construct(
+        kind=ActionKind.REFUND,
+        resource_id="",
+        resource_kind=ActionResourceKind.PAYMENT,
+        resource_hash="a" * 64,
+        amount=10,
+        currency="usd",
+        reason="corrupted persisted action",
+    )
+    result = MockActionExecutor().execute(
+        corrupted,
+        approval=approval(ReviewState.APPROVED),
+        idempotency_key="ro_empty_target",
+    )
+    assert result.state is ExecutionState.FAILED
+    assert result.external_reference is None
+    assert "not verified" in result.message
+
+
 def test_executor_rejects_verified_target_without_refund_amount() -> None:
     refund = verified_refund().model_copy(update={"amount": None})
     result = MockActionExecutor().execute(
