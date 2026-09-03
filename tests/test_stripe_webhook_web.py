@@ -66,10 +66,10 @@ def test_webhook_ingress_requires_signature_and_limits_body() -> None:
 @pytest.mark.parametrize(
     ("error", "status_code"),
     [
-        (StripeWebhookSignatureError("bad"), 400),
-        (StripeWebhookProtocolError("bad"), 400),
-        (NotFoundError("race"), 503),
-        (IntegrityError("conflict"), 409),
+        (StripeWebhookSignatureError("internal-signature-sentinel"), 400),
+        (StripeWebhookProtocolError("internal-protocol-sentinel"), 400),
+        (NotFoundError("internal-race-sentinel"), 503),
+        (IntegrityError("internal-integrity-sentinel"), 409),
     ],
 )
 def test_webhook_ingress_maps_failures_without_leaking_details(
