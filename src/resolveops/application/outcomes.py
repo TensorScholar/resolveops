@@ -39,7 +39,10 @@ class ActionOutcomeService:
             }
         ]
         execution_hash = object_digest(execution.model_dump(mode="json"))
-        if not execution_events or execution_events[-1].payload.get("execution_hash") != execution_hash:
+        if (
+            not execution_events
+            or execution_events[-1].payload.get("execution_hash") != execution_hash
+        ):
             raise IntegrityError("execution record does not match its audit evidence")
 
         approval = self.store.get_approval(execution.approval_id)
@@ -51,7 +54,10 @@ class ActionOutcomeService:
             if event.event_type == "analysis.reviewed" and event.entity_id == approval.id
         ]
         approval_hash = object_digest(approval.model_dump(mode="json"))
-        if len(approval_events) != 1 or approval_events[0].payload.get("approval_hash") != approval_hash:
+        if (
+            len(approval_events) != 1
+            or approval_events[0].payload.get("approval_hash") != approval_hash
+        ):
             raise IntegrityError("approval record does not match its audit evidence")
         return execution
 
@@ -125,7 +131,9 @@ class ActionOutcomeService:
                 continue
             raw = event.payload.get("observation")
             if not isinstance(raw, dict):
-                raise IntegrityError("outcome audit event does not contain a structured observation")
+                raise IntegrityError(
+                    "outcome audit event does not contain a structured observation"
+                )
             try:
                 observation = ActionOutcomeObservation.model_validate(raw)
             except (ValueError, TypeError) as exc:
