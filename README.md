@@ -23,6 +23,8 @@ support case + customer context + approved evidence
                     ↓
         provider result / reconciliation
                     ↓
+ authenticated outcome trigger + provider-current verification
+                    ↓
           verified support outcome + audit
 ```
 
@@ -34,13 +36,14 @@ remain systems outside that boundary.
 
 Modern support platforms can generate responses and call tools. The harder operational problem
 starts when a high-impact action is approved but the provider response is delayed, ambiguous,
-retried, or lost. A support team still needs to answer:
+retried, lost, or later changes state. A support team still needs to answer:
 
 - Which evidence and policy justified this action?
 - What exact external resource and action were approved?
 - Was an external side effect already attempted?
 - Can a retry duplicate the customer impact?
-- Does the provider confirm a terminal outcome?
+- Does the provider confirm a terminal outcome now?
+- Can an asynchronous provider event be authenticated and deduplicated?
 - Is the support case actually resolved after the action?
 
 ResolveOps makes those questions first-class workflow state instead of leaving them in logs or
@@ -62,6 +65,9 @@ agent traces.
   reviewable, plus payment-state revalidation at approval time;
 - conservative refund-amount extraction that refuses to guess among distinct explicit money
   values in one customer message;
+- a narrow Stripe transaction adapter for exact **non-Connect USD Charge refunds**, with explicit
+  API version/credential injection, stable idempotency identity, exact refund reconciliation, and
+  fail-closed ambiguous-response replay limits;
 - explicit plan-change and cancellation proposals;
 - mandatory human review for destructive actions in the current development line;
 - one atomic review transition that also claims the approved execution intent;
@@ -71,16 +77,26 @@ agent traces.
   interaction may have started;
 - persisted uncertain execution state that survives process restart;
 - reconciliation as a separate, auditable operation;
-- hash-chained audit evidence over analyses, approvals, and execution transitions;
-- SQLite and in-memory persistence;
+- append-only post-action outcome observations that do not rewrite terminal command history;
+- authenticated Stripe refund-webhook processing that verifies the raw-body HMAC/timestamp and
+  test/live mode before using an event as an outcome trigger;
+- webhook refund-to-execution binding plus an exact provider-current read instead of trusting the
+  webhook payload's embedded status;
+- atomic Stripe event-ID claims so concurrent/retried delivery commits at most one outcome fact;
+- a dedicated minimal Stripe webhook FastAPI ingress, separate from the broader reference support
+  API;
+- hash-chained audit evidence over analyses, approvals, execution transitions, and outcome
+  observations;
+- SQLite and in-memory persistence, plus a specialized SQLite webhook store for durable event
+  replay protection;
 - support-outcome and execution-integrity metrics;
-- CLI workflows and an optional FastAPI adapter;
+- CLI workflows and optional FastAPI adapters;
 - ports that keep vendor billing/execution and AgentGuard-style runtime authorization outside the
   domain.
 
-The default implementation remains offline and deterministic. It requires no API key and has no
-hidden LLM dependency. `MemoryBillingReader` is a local/test reference adapter, not a live billing
-integration.
+The default demo remains offline and deterministic and requires no API key or hidden LLM dependency.
+The Stripe adapter and webhook boundary are optional integration paths; deterministic CI proves our
+contracts, not Stripe's real provider behavior.
 
 ## Quick start
 
@@ -94,11 +110,14 @@ resolveops demo
 pytest
 ```
 
-Run the optional API adapter:
+Run the optional reference support API adapter:
 
 ```bash
 resolveops serve
 ```
+
+The dedicated Stripe webhook app is intentionally composed separately from that reference support
+API so financial ingress can receive a narrower deployment/security boundary.
 
 ## Architecture
 
@@ -132,17 +151,25 @@ High-impact actions are deliberately constrained:
 - distinct explicit refund-related money values are treated as ambiguous rather than guessed;
 - ambiguous action parameters fail closed;
 - destructive actions require explicit human review in the current development line;
-- approval and execution intent are persisted together so a process crash cannot lose the
-  fact that an approved action is due for execution;
+- approval and execution intent are persisted together so a process crash cannot lose the fact
+  that an approved action is due for execution;
 - every external adapter invocation is first persisted as an `in_flight` attempt;
 - an external call uses a stable idempotency key;
 - transport ambiguity is represented as `unknown`, never silently collapsed into failure;
 - non-terminal executions can be reconciled after restart;
-- analysis, approval, and execution records are bound into the hash-chained audit log.
+- Stripe execution is deliberately restricted to the currently evidenced resource/currency shape
+  rather than pretending Connect or broad-currency semantics are generic;
+- authenticated Stripe events must pass raw-body signature/timestamp/livemode validation and bind
+  to one known refund execution;
+- a signed webhook is only an authenticated trigger: ResolveOps re-reads the exact provider refund
+  before appending the current outcome observation;
+- Stripe event identities are atomically claimed before an outcome observation is committed;
+- analysis, approval, execution, and outcome records are bound into the hash-chained audit log.
 
-This is not a complete production security boundary. Authentication, tenant isolation,
-credential handling, provider-specific idempotency/current-state guarantees, webhook
-authenticity, and runtime authorization belong to deployment/integration boundaries.
+This is not a complete production security boundary. Real Stripe test-mode transaction/webhook
+evidence, deployment identity and authorization, endpoint-secret rotation, infrastructure rate
+limiting/request-size enforcement, tenant isolation, and runtime credential/action authorization
+remain production gates.
 
 See [Security model](docs/security-model.md) and [Limitations](docs/limitations.md).
 
@@ -150,12 +177,12 @@ See [Security model](docs/security-model.md) and [Limitations](docs/limitations.
 
 The last frozen engineering baseline is **0.1.0rc2**. Its GitHub CI evidence covers Python
 3.11, 3.12, and 3.13, 72 tests, and 96.11% branch-aware coverage. That evidence predates the
-post-RC execution-integrity work on `main` and must not be used as validation for later
-behavior-changing commits.
+post-RC execution-integrity and integration work on `main` and must not be used as validation for
+later behavior-changing commits.
 
 Every new pull request is revalidated by the repository CI matrix. A new release-candidate
-validation record will be frozen only after the real integration path and its failure modes
-are exercised.
+validation record will be frozen only after the real integration path and its failure modes are
+exercised.
 
 See [Release validation](docs/release-validation.md).
 
@@ -169,6 +196,7 @@ ResolveOps owns:
 - explicit resource-bound action proposals and human review;
 - support workflow state transitions;
 - execution intent, idempotency, reconciliation, and post-action verification;
+- authenticated support-specific outcome triggers and event replay protection;
 - support outcome measurement and auditability.
 
 ResolveOps does **not** own:
@@ -179,15 +207,17 @@ ResolveOps does **not** own:
 - generic agent orchestration;
 - RFP/security-questionnaire governance;
 - a help-desk, CRM, billing ledger, or identity system of record;
-- a broad connector marketplace.
+- a broad connector or webhook marketplace.
 
-The next integration target is deliberately one narrow **live refund adapter** behind the
-payment-binding and execution contracts, not a connector catalog.
+The next integration milestone is deliberately **provider evidence**, not connector breadth: retain
+real Stripe test-mode transaction and webhook-delivery evidence for the already narrow refund path,
+then validate the pilot economics before expanding scope.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Integration contracts](docs/integration-contracts.md)
+- [Stripe refund integration](docs/stripe-refund-integration.md)
 - [Security model](docs/security-model.md)
 - [Limitations](docs/limitations.md)
 - [Product metrics](docs/product-metrics.md)
@@ -199,7 +229,8 @@ payment-binding and execution contracts, not a connector catalog.
 
 **Development after the 0.1.0rc2 frozen baseline. Production readiness is not claimed.**
 
-A stable release requires a real external integration, credible retry/reconciliation behavior,
-prospective product evidence, and release-governance gates in addition to green CI.
+A stable release requires retained real provider evidence, credible transaction/webhook failure-mode
+validation, prospective product evidence, deployment authorization, and release-governance gates in
+addition to green CI.
 
 Licensed under the Apache License 2.0.
