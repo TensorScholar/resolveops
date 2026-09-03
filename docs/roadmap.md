@@ -15,21 +15,25 @@ ResolveOps is intentionally narrow. The roadmap prioritizes evidence from real r
 - reproducible engineering and release validation.
 
 Post-RC development has added crash-safe action lifecycle/reconciliation, canonical case-ingestion
-idempotency, and explicit refund payment-target binding. These changes are not part of the frozen
-`0.1.0rc2` validation record.
+idempotency, explicit refund payment-target binding, and a narrow Stripe Charge refund transaction
+adapter with separate append-only post-action outcome observations. These changes are not part of
+the frozen `0.1.0rc2` validation record.
 
 ## Next milestones
 
-1. implement one live refund adapter behind the existing `BillingReader` and `ActionExecutor`
-   contracts without widening refund targeting into customer-level payment search;
-2. validate provider authentication, current-state enforcement, idempotency retention, timeout,
-   ambiguous-response, webhook/reconciliation, and partial-refund behavior against that adapter;
-3. run one narrowly scoped pilot using sanitized, synthetic, or customer-owned data;
+1. validate the Stripe Charge/refund transaction against Stripe **test mode**, including provider
+   authentication/API-version pinning, successful partial refund, provider-current over-refund
+   rejection, same-key ambiguous-response recovery, and refund lifecycle retrieval;
+2. add authenticated Stripe webhook ingestion only after signature verification, replay handling,
+   event-to-execution identity binding, and failure-path tests are proven;
+3. run one narrowly scoped support-operations pilot using sanitized, synthetic, or customer-owned
+   case data and test/sandbox financial operations;
 4. add the deployment identity/authorization boundary required by the connector, delegating
    runtime credential/action binding to AgentGuard where appropriate;
 5. address reliability and product-quality findings from the pilot;
-6. freeze a new release-candidate validation record and cut a stable `0.1.0` only when the
-   external evidence supports it.
+6. protect `main` with required CI/review governance, rehearse the release path, freeze a new
+   release-candidate validation record, and cut stable `0.1.0` only when the external evidence
+   supports it.
 
 ## Explicitly deferred
 
