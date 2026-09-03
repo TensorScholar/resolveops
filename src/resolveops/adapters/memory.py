@@ -35,6 +35,7 @@ class MemoryStore:
         self._execution_by_analysis: dict[str, str] = {}
         self.outcomes: list[Outcome] = []
         self.audit: list[AuditEvent] = []
+        self._audit_event_keys: set[str] = set()
         self._lock = RLock()
 
     def put_ticket(self, ticket: Ticket) -> None:
@@ -254,6 +255,28 @@ class MemoryStore:
                     payload=payload,
                 )
             )
+
+    def append_audit_event_once(
+        self,
+        unique_key: str,
+        event_type: str,
+        entity_id: str,
+        payload: dict[str, object],
+    ) -> AuditEvent | None:
+        if not unique_key:
+            raise ValueError("audit event unique key must not be empty")
+        with self._lock:
+            if unique_key in self._audit_event_keys:
+                return None
+            event = self._append_draft_locked(
+                AuditEventDraft(
+                    event_type=event_type,
+                    entity_id=entity_id,
+                    payload=payload,
+                )
+            )
+            self._audit_event_keys.add(unique_key)
+            return event
 
     def list_audit(self) -> list[AuditEvent]:
         with self._lock:
