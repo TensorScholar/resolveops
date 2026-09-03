@@ -28,11 +28,13 @@
     "model_cost_usd": {
       "anyOf": [
         {
-          "minimum": 0.0,
+          "exclusiveMaximum": 100000000,
+          "minimum": 0,
+          "multipleOf": 1e-06,
           "type": "number"
         },
         {
-          "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,8}|(?=[\\d.]{1,15}0*$)\\d{0,8}\\.\\d{0,6}0*$)",
+          "pattern": "^\\+?(?=.*\\d)0*(?:\\d{1,8}|\\d{0,8}\\.\\d{0,6}0*)$",
           "type": "string"
         }
       ],

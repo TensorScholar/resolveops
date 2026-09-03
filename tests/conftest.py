@@ -4,18 +4,46 @@ from decimal import Decimal
 import pytest
 
 from resolveops.adapters.actions import MockActionExecutor
+from resolveops.adapters.billing import MemoryBillingReader
 from resolveops.adapters.generator import DeterministicResponseGenerator
 from resolveops.adapters.memory import MemoryStore
 from resolveops.application.service import ResolveOpsService
-from resolveops.domain.models import CustomerProfile, KnowledgeArticle
+from resolveops.domain.models import CustomerProfile, KnowledgeArticle, PaymentSnapshot
 
 
 @pytest.fixture
-def service() -> ResolveOpsService:
+def billing_reader() -> MemoryBillingReader:
+    return MemoryBillingReader(
+        (
+            PaymentSnapshot(
+                id="pay_cust_1",
+                customer_id="cust_1",
+                amount=Decimal("2000.00"),
+                amount_refunded=Decimal("0.00"),
+                currency="usd",
+                refundable=True,
+                status="succeeded",
+            ),
+            PaymentSnapshot(
+                id="pay_eval",
+                customer_id="eval-customer",
+                amount=Decimal("2000.00"),
+                amount_refunded=Decimal("0.00"),
+                currency="usd",
+                refundable=True,
+                status="succeeded",
+            ),
+        )
+    )
+
+
+@pytest.fixture
+def service(billing_reader: MemoryBillingReader) -> ResolveOpsService:
     service = ResolveOpsService(
         store=MemoryStore(),
         generator=DeterministicResponseGenerator(),
         action_executor=MockActionExecutor(),
+        billing_reader=billing_reader,
     )
     service.seed_customer(
         CustomerProfile(

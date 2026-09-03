@@ -4,6 +4,7 @@ from decimal import Decimal
 from resolveops.domain.models import (
     ActionKind,
     ActionProposal,
+    ActionResourceKind,
     Citation,
     Disposition,
     PolicySettings,
@@ -25,8 +26,11 @@ def citation(age_days: int = 0) -> Citation:
 def refund(amount: Decimal | None) -> ActionProposal:
     return ActionProposal(
         kind=ActionKind.REFUND,
-        resource_id="c",
+        resource_id="pay_test",
+        resource_kind=ActionResourceKind.PAYMENT,
+        resource_hash="a" * 64,
         amount=amount,
+        currency="usd",
         reason="test",
     )
 
@@ -60,6 +64,24 @@ def test_refund_requires_review() -> None:
     )
     assert decision.disposition is Disposition.REVIEW_REQUIRED
     assert decision.action_allowed
+
+
+def test_unverified_refund_target_cannot_be_approved() -> None:
+    legacy = ActionProposal(
+        kind=ActionKind.REFUND,
+        resource_id="cust_1",
+        amount=Decimal("49"),
+        reason="legacy",
+    )
+    decision = evaluate(
+        confidence=0.9,
+        citations=(citation(),),
+        action=legacy,
+        settings=PolicySettings(),
+    )
+    assert decision.disposition is Disposition.REVIEW_REQUIRED
+    assert decision.reasons == ("refund_payment_target_unverified",)
+    assert not decision.action_allowed
 
 
 def test_oversized_refund_denied() -> None:

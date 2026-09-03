@@ -3,10 +3,12 @@ from __future__ import annotations
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
 from resolveops.adapters.actions import MockActionExecutor
+from resolveops.adapters.billing import MemoryBillingReader
 from resolveops.adapters.generator import DeterministicResponseGenerator
 from resolveops.adapters.memory import MemoryStore
 from resolveops.adapters.sqlite import SQLiteStore
@@ -19,6 +21,7 @@ from resolveops.domain.models import (
     Disposition,
     IntentKind,
     KnowledgeArticle,
+    PaymentSnapshot,
     Ticket,
 )
 
@@ -28,6 +31,19 @@ def build_service(store: SQLiteStore | MemoryStore) -> ResolveOpsService:
         store=store,
         generator=DeterministicResponseGenerator(),
         action_executor=MockActionExecutor(),
+        billing_reader=MemoryBillingReader(
+            (
+                PaymentSnapshot(
+                    id="pay-c",
+                    customer_id="c",
+                    amount=Decimal("1000.00"),
+                    amount_refunded=Decimal("0.00"),
+                    currency="usd",
+                    refundable=True,
+                    status="succeeded",
+                ),
+            )
+        ),
     )
     service.seed_customer(CustomerProfile(id="c"))
     service.seed_article(
@@ -47,6 +63,7 @@ def stable_ticket() -> Ticket:
         id="case-1",
         customer_id="c",
         message="Refund $10",
+        payment_reference="pay-c",
         received_at=datetime(2026, 9, 2, 18, 0, tzinfo=UTC),
     )
 
@@ -56,6 +73,7 @@ def test_replayed_ticket_returns_one_canonical_analysis(service) -> None:
         id="case-memory",
         customer_id="cust_1",
         message="Refund $49",
+        payment_reference="pay_cust_1",
         received_at=datetime(2026, 9, 2, 18, 0, tzinfo=UTC),
     )
 
@@ -75,6 +93,7 @@ def test_same_ticket_id_with_different_content_fails_closed(service) -> None:
         id="case-conflict",
         customer_id="cust_1",
         message="Refund $49",
+        payment_reference="pay_cust_1",
         received_at=datetime(2026, 9, 2, 18, 0, tzinfo=UTC),
     )
     first = service.analyze(ticket)

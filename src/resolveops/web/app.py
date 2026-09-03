@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,7 +15,13 @@ from resolveops.domain.errors import (
     NotFoundError,
     PolicyDeniedError,
 )
-from resolveops.domain.models import CustomerProfile, KnowledgeArticle, Outcome, Ticket
+from resolveops.domain.models import (
+    CustomerProfile,
+    KnowledgeArticle,
+    Outcome,
+    PaymentSnapshot,
+    Ticket,
+)
 
 
 class ReviewRequest(BaseModel):
@@ -25,13 +32,17 @@ class ReviewRequest(BaseModel):
     note: str = Field(default="", max_length=2_000)
 
 
-def create_app(database: str | Path = "resolveops.db") -> object:
+def create_app(
+    database: str | Path = "resolveops.db",
+    *,
+    payments: Iterable[PaymentSnapshot] = (),
+) -> object:
     try:
         from fastapi import FastAPI, HTTPException
     except ImportError as exc:
         raise RuntimeError("Install ResolveOps with the 'web' extra.") from exc
 
-    service = build_service(database)
+    service = build_service(database, payments=payments)
     app = FastAPI(title="ResolveOps", version=__version__)
 
     def domain_error(exc: Exception) -> HTTPException:

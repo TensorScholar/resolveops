@@ -16,6 +16,7 @@ def test_evaluation_summary(service) -> None:
                     id="eval-ticket",
                     customer_id="eval-customer",
                     message="refund $49",
+                    payment_reference="pay_eval",
                 ),
                 customer=CustomerProfile(id="eval-customer"),
                 expected_intent=IntentKind.REFUND,

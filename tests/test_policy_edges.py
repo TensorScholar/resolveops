@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from resolveops.domain.models import (
     ActionKind,
     ActionProposal,
+    ActionResourceKind,
     Citation,
     Disposition,
     PolicySettings,
@@ -50,8 +51,11 @@ def test_automatic_action_configuration_is_rejected() -> None:
 def test_all_valid_actions_require_review() -> None:
     action = ActionProposal(
         kind=ActionKind.REFUND,
-        resource_id="c",
+        resource_id="pay_1",
+        resource_kind=ActionResourceKind.PAYMENT,
+        resource_hash="a" * 64,
         amount=Decimal("5"),
+        currency="usd",
         reason="r",
     )
     decision = evaluate(

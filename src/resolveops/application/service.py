@@ -19,6 +19,9 @@ from resolveops.domain.execution import (
 )
 from resolveops.domain.models import (
     ActionExecution,
+    ActionKind,
+    ActionProposal,
+    ActionResourceKind,
     AnalysisResult,
     Approval,
     AuditEvent,
@@ -30,15 +33,23 @@ from resolveops.domain.models import (
     EvaluationSummary,
     ExecutionResult,
     ExecutionState,
+    IntentKind,
     Outcome,
+    PaymentSnapshot,
     PolicySettings,
     ReviewState,
     Ticket,
 )
 from resolveops.domain.policy import evaluate
 from resolveops.domain.retrieval import retrieve
-from resolveops.domain.triage import classify_intent, propose_action
-from resolveops.ports.interfaces import ActionExecutor, ResponseGenerator, Store
+from resolveops.domain.triage import classify_intent, extract_refund_request, propose_action
+from resolveops.ports.interfaces import ActionExecutor, BillingReader, ResponseGenerator, Store
+
+
+class _UnavailableBillingReader:
+    def get_payment(self, payment_id: str) -> PaymentSnapshot | None:
+        del payment_id
+        return None
 
 
 class ResolveOpsService:
@@ -48,11 +59,13 @@ class ResolveOpsService:
         store: Store,
         generator: ResponseGenerator,
         action_executor: ActionExecutor,
+        billing_reader: BillingReader | None = None,
         policy: PolicySettings | None = None,
     ) -> None:
         self.store = store
         self.generator = generator
         self.action_executor = action_executor
+        self.billing_reader = billing_reader or _UnavailableBillingReader()
         self.policy = policy or PolicySettings()
 
     def _audit(self, event_type: str, entity_id: str, payload: dict[str, object]) -> None:
@@ -174,7 +187,75 @@ class ResolveOpsService:
             },
         )
 
+    @staticmethod
+    def _refund_action_is_bound(action: ActionProposal) -> bool:
+        return action.kind is not ActionKind.REFUND or (
+            action.resource_kind is ActionResourceKind.PAYMENT
+            and action.resource_hash is not None
+            and action.currency is not None
+        )
+
+    def _ensure_action_executable(self, action: ActionProposal) -> None:
+        if not self._refund_action_is_bound(action):
+            raise PolicyDeniedError("refund action is not bound to a verified payment snapshot")
+
+    def _bind_refund_action(
+        self,
+        ticket: Ticket,
+    ) -> tuple[ActionProposal | None, tuple[str, ...], Disposition]:
+        if ticket.payment_reference is None:
+            return None, ("refund_payment_target_missing",), Disposition.ESCALATE
+
+        payment = self.billing_reader.get_payment(ticket.payment_reference)
+        if payment is None:
+            return None, ("refund_payment_target_not_found",), Disposition.ESCALATE
+        if payment.id != ticket.payment_reference:
+            raise IntegrityError("billing reader returned a payment with mismatched identity")
+        if payment.customer_id != ticket.customer_id:
+            return None, ("refund_payment_ownership_mismatch",), Disposition.DENY
+        if not payment.refundable or payment.remaining_refundable <= Decimal("0"):
+            return None, ("refund_payment_not_refundable",), Disposition.DENY
+
+        amount, requested_currency = extract_refund_request(ticket.message)
+        if requested_currency is not None and requested_currency != payment.currency:
+            return None, ("refund_currency_mismatch",), Disposition.DENY
+        if amount is not None and amount <= Decimal("0"):
+            return None, ("refund_amount_must_be_positive",), Disposition.DENY
+        if amount is not None and amount > payment.remaining_refundable:
+            return None, ("refund_exceeds_remaining_payment_amount",), Disposition.DENY
+
+        action = ActionProposal(
+            kind=ActionKind.REFUND,
+            resource_id=payment.id,
+            resource_kind=ActionResourceKind.PAYMENT,
+            resource_hash=object_digest(payment.model_dump(mode="json")),
+            amount=amount,
+            currency=payment.currency,
+            reason="Customer requested a refund against a verified payment.",
+        )
+        return action, (), Disposition.ESCALATE
+
+    def _verify_refund_target_current(self, analysis: AnalysisResult) -> None:
+        action = analysis.proposed_action
+        if action is None or action.kind is not ActionKind.REFUND:
+            return
+        self._ensure_action_executable(action)
+
+        ticket = self.store.get_ticket(analysis.ticket_id)
+        if ticket is None:
+            raise IntegrityError("refund analysis references a missing persisted ticket")
+        payment = self.billing_reader.get_payment(action.resource_id)
+        if payment is None:
+            raise PolicyDeniedError("refund payment target is no longer available")
+        if payment.id != action.resource_id:
+            raise IntegrityError("billing reader returned a payment with mismatched identity")
+        if payment.customer_id != ticket.customer_id:
+            raise PolicyDeniedError("refund payment ownership changed before approval")
+        if object_digest(payment.model_dump(mode="json")) != action.resource_hash:
+            raise PolicyDeniedError("refund payment state changed; re-analysis is required")
+
     def _begin_execution_attempt(self, execution: ActionExecution) -> ActionExecution:
+        self._ensure_action_executable(execution.action)
         updated = begin_execution_attempt(execution)
         self.store.update_execution(
             updated,
@@ -228,6 +309,11 @@ class ResolveOpsService:
             raise NotFoundError(f"customer not found: {ticket.customer_id}")
         intent = classify_intent(ticket.message)
         action = propose_action(ticket, intent)
+        blocking_reasons: tuple[str, ...] = ()
+        blocking_disposition = Disposition.ESCALATE
+        if intent is IntentKind.REFUND:
+            action, blocking_reasons, blocking_disposition = self._bind_refund_action(ticket)
+
         citations = retrieve(ticket.message, self.store.list_articles())
         summary, draft, confidence = self.generator.generate(
             ticket=ticket,
@@ -240,6 +326,8 @@ class ResolveOpsService:
             citations=citations,
             action=action,
             settings=self.policy,
+            blocking_reasons=blocking_reasons,
+            blocking_disposition=blocking_disposition,
         )
         analysis = AnalysisResult(
             ticket_id=ticket.id,
@@ -286,6 +374,7 @@ class ResolveOpsService:
         if analysis.disposition is not Disposition.REVIEW_REQUIRED:
             raise InvalidTransitionError("analysis is not waiting for review")
         if approve:
+            self._verify_refund_target_current(analysis)
             decision = evaluate(
                 confidence=analysis.confidence,
                 citations=self._current_citations(analysis),

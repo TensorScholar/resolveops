@@ -8,10 +8,49 @@ from enum import StrEnum
 from typing import Annotated
 from uuid import uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, WithJsonSchema, model_validator
 
-StrictMoney = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=12, decimal_places=2)]
-StrictCost = Annotated[Decimal, Field(ge=Decimal("0"), max_digits=14, decimal_places=6)]
+_MONEY_JSON_SCHEMA = {
+    "anyOf": [
+        {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 10_000_000_000,
+            "multipleOf": 0.01,
+        },
+        {
+            "type": "string",
+            "pattern": r"^\+?(?=.*\d)0*(?:\d{1,10}|\d{0,10}\.\d{0,2}0*)$",
+        },
+    ]
+}
+_COST_JSON_SCHEMA = {
+    "anyOf": [
+        {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMaximum": 100_000_000,
+            "multipleOf": 0.000001,
+        },
+        {
+            "type": "string",
+            "pattern": r"^\+?(?=.*\d)0*(?:\d{1,8}|\d{0,8}\.\d{0,6}0*)$",
+        },
+    ]
+}
+
+StrictMoney = Annotated[
+    Decimal,
+    Field(ge=Decimal("0"), max_digits=12, decimal_places=2),
+    WithJsonSchema(_MONEY_JSON_SCHEMA),
+]
+StrictCost = Annotated[
+    Decimal,
+    Field(ge=Decimal("0"), max_digits=14, decimal_places=6),
+    WithJsonSchema(_COST_JSON_SCHEMA),
+]
+CurrencyCode = Annotated[str, Field(pattern=r"^[a-z]{3}$")]
+ObjectDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 def utc_now() -> datetime:
@@ -50,6 +89,11 @@ class ActionKind(StrEnum):
     CANCELLATION = "cancellation"
 
 
+class ActionResourceKind(StrEnum):
+    CUSTOMER = "customer"
+    PAYMENT = "payment"
+
+
 class ReviewState(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -74,6 +118,7 @@ class Ticket(StrictModel):
     customer_id: str
     message: str = Field(min_length=1, max_length=20_000)
     channel: Channel = Channel.WEB
+    payment_reference: str | None = Field(default=None, min_length=1, max_length=320)
     received_at: AwareDatetime = Field(default_factory=utc_now)
 
 
@@ -84,6 +129,26 @@ class CustomerProfile(StrictModel):
     account_age_days: int = Field(default=0, ge=0)
     refund_count_90d: int = Field(default=0, ge=0)
     risk_flags: tuple[str, ...] = ()
+
+
+class PaymentSnapshot(StrictModel):
+    id: str = Field(min_length=1, max_length=320)
+    customer_id: str = Field(min_length=1, max_length=320)
+    amount: StrictMoney
+    amount_refunded: StrictMoney
+    currency: CurrencyCode
+    refundable: bool
+    status: str = Field(min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_refund_totals(self) -> PaymentSnapshot:
+        if self.amount_refunded > self.amount:
+            raise ValueError("payment amount_refunded cannot exceed amount")
+        return self
+
+    @property
+    def remaining_refundable(self) -> Decimal:
+        return self.amount - self.amount_refunded
 
 
 class KnowledgeArticle(StrictModel):
@@ -113,8 +178,11 @@ class Citation(StrictModel):
 
 class ActionProposal(StrictModel):
     kind: ActionKind
-    resource_id: str
+    resource_id: str = Field(min_length=1, max_length=320)
+    resource_kind: ActionResourceKind = ActionResourceKind.CUSTOMER
+    resource_hash: ObjectDigest | None = None
     amount: StrictMoney | None = None
+    currency: CurrencyCode | None = None
     target_plan: str | None = None
     reason: str
 

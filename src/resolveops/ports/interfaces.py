@@ -15,6 +15,7 @@ from resolveops.domain.models import (
     ExecutionResult,
     KnowledgeArticle,
     Outcome,
+    PaymentSnapshot,
     Ticket,
 )
 
@@ -59,6 +60,10 @@ class Store(Protocol):
         self, event_type: str, entity_id: str, payload: dict[str, object]
     ) -> AuditEvent: ...
     def list_audit(self) -> list[AuditEvent]: ...
+
+
+class BillingReader(Protocol):
+    def get_payment(self, payment_id: str) -> PaymentSnapshot | None: ...
 
 
 class ResponseGenerator(Protocol):

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from resolveops.domain.models import ActionKind, ActionProposal, IntentKind, Ticket
 
-_MONEY = re.compile(r"(?:\$\s*|usd\s+)(\d+(?:\.\d{1,2})?)", re.IGNORECASE)
+_MONEY = re.compile(
+    r"(?:(?P<symbol>\$)\s*|(?P<code>usd)\s+)(?P<amount>\d+(?:\.\d{1,2})?)",
+    re.IGNORECASE,
+)
 
 
 def classify_intent(message: str) -> IntentKind:
@@ -29,19 +32,29 @@ def classify_intent(message: str) -> IntentKind:
     return IntentKind.UNKNOWN
 
 
-def _extract_amount(message: str) -> Decimal | None:
-    match = _MONEY.search(message)
-    return Decimal(match.group(1)).quantize(Decimal("0.01")) if match else None
+def extract_refund_request(message: str) -> tuple[Decimal | None, str | None]:
+    """Extract one unambiguous explicit USD amount; never guess among invalid values."""
+    matches = list(_MONEY.finditer(message))
+    if not matches:
+        return None, None
+
+    try:
+        amounts = {Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches}
+    except InvalidOperation:
+        # The message still explicitly names USD, but the amount is outside the supported
+        # decimal envelope. Preserve the currency signal while making the amount non-executable.
+        return None, "usd"
+
+    if len(amounts) != 1:
+        return None, "usd"
+    return next(iter(amounts)), "usd"
 
 
 def propose_action(ticket: Ticket, intent: IntentKind) -> ActionProposal | None:
     if intent is IntentKind.REFUND:
-        return ActionProposal(
-            kind=ActionKind.REFUND,
-            resource_id=ticket.customer_id,
-            amount=_extract_amount(ticket.message),
-            reason="Customer requested a refund.",
-        )
+        # A refund cannot be proposed safely from customer text alone. The application
+        # binds it to a verified payment snapshot from the billing system of record.
+        return None
     if intent is IntentKind.PLAN_CHANGE:
         text = ticket.message.casefold()
         target = "pro" if "upgrade" in text else "basic" if "downgrade" in text else None

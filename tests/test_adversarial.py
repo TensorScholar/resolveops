@@ -4,10 +4,12 @@ import json
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
 from resolveops.adapters.actions import MockActionExecutor
+from resolveops.adapters.billing import MemoryBillingReader
 from resolveops.adapters.generator import DeterministicResponseGenerator
 from resolveops.adapters.sqlite import SQLiteStore
 from resolveops.application.service import ResolveOpsService
@@ -21,6 +23,7 @@ from resolveops.domain.models import (
     ExecutionResult,
     ExecutionState,
     KnowledgeArticle,
+    PaymentSnapshot,
     Ticket,
 )
 
@@ -30,6 +33,19 @@ def sqlite_service(tmp_path) -> ResolveOpsService:
         store=SQLiteStore(tmp_path / "adversarial.db"),
         generator=DeterministicResponseGenerator(),
         action_executor=MockActionExecutor(),
+        billing_reader=MemoryBillingReader(
+            (
+                PaymentSnapshot(
+                    id="pay-c",
+                    customer_id="c",
+                    amount=Decimal("1000.00"),
+                    amount_refunded=Decimal("0.00"),
+                    currency="usd",
+                    refundable=True,
+                    status="succeeded",
+                ),
+            )
+        ),
     )
     service.seed_customer(CustomerProfile(id="c"))
     service.seed_article(
@@ -46,7 +62,9 @@ def sqlite_service(tmp_path) -> ResolveOpsService:
 
 def test_persisted_analysis_tamper_is_detected_before_execution(tmp_path) -> None:
     service = sqlite_service(tmp_path)
-    analysis = service.analyze(Ticket(customer_id="c", message="Refund $10"))
+    analysis = service.analyze(
+        Ticket(customer_id="c", message="Refund $10", payment_reference="pay-c")
+    )
     store = service.store
     assert isinstance(store, SQLiteStore)
 
@@ -71,7 +89,11 @@ def test_persisted_analysis_tamper_is_detected_before_execution(tmp_path) -> Non
 @pytest.mark.parametrize("mode", ["revoked", "expired", "replaced"])
 def test_evidence_change_blocks_review(service, mode: str) -> None:
     analysis = service.analyze(
-        Ticket(customer_id="cust_1", message="I was charged twice, refund $49")
+        Ticket(
+            customer_id="cust_1",
+            message="I was charged twice, refund $49",
+            payment_reference="pay_cust_1",
+        )
     )
     article = service.store.articles["kb_refund"]
     if mode == "revoked":
@@ -106,7 +128,11 @@ def test_prompt_text_cannot_override_policy(service) -> None:
 
 def test_article_content_change_without_metadata_change_blocks_review(service) -> None:
     analysis = service.analyze(
-        Ticket(customer_id="cust_1", message="I was charged twice, refund $49")
+        Ticket(
+            customer_id="cust_1",
+            message="I was charged twice, refund $49",
+            payment_reference="pay_cust_1",
+        )
     )
     article = service.store.articles["kb_refund"]
     changed = article.model_copy(update={"body": "Tampered policy content."})
@@ -119,7 +145,9 @@ def test_article_content_change_without_metadata_change_blocks_review(service) -
 
 def test_audit_review_record_blocks_replay_if_claim_is_deleted(tmp_path) -> None:
     service = sqlite_service(tmp_path)
-    analysis = service.analyze(Ticket(customer_id="c", message="Refund $10"))
+    analysis = service.analyze(
+        Ticket(customer_id="c", message="Refund $10", payment_reference="pay-c")
+    )
     service.review(analysis.id, reviewer="manager@example.com", approve=True)
     store = service.store
     assert isinstance(store, SQLiteStore)
@@ -154,7 +182,11 @@ class ExplodingExecutor:
 def test_executor_exception_is_recorded_without_blind_retry(service) -> None:
     service.action_executor = ExplodingExecutor()
     analysis = service.analyze(
-        Ticket(customer_id="cust_1", message="I was charged twice, refund $49")
+        Ticket(
+            customer_id="cust_1",
+            message="I was charged twice, refund $49",
+            payment_reference="pay_cust_1",
+        )
     )
     _, execution = service.review(
         analysis.id,

@@ -15,11 +15,13 @@
         "amount": {
           "anyOf": [
             {
-              "minimum": 0.0,
+              "exclusiveMaximum": 10000000000,
+              "minimum": 0,
+              "multipleOf": 0.01,
               "type": "number"
             },
             {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,10}|(?=[\\d.]{1,13}0*$)\\d{0,10}\\.\\d{0,2}0*$)",
+              "pattern": "^\\+?(?=.*\\d)0*(?:\\d{1,10}|\\d{0,10}\\.\\d{0,2}0*)$",
               "type": "string"
             },
             {
@@ -29,6 +31,19 @@
           "default": null,
           "title": "Amount"
         },
+        "currency": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{3}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
         "kind": {
           "$ref": "#/$defs/ActionKind"
         },
@@ -36,9 +51,28 @@
           "title": "Reason",
           "type": "string"
         },
+        "resource_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource Hash"
+        },
         "resource_id": {
+          "maxLength": 320,
+          "minLength": 1,
           "title": "Resource Id",
           "type": "string"
+        },
+        "resource_kind": {
+          "$ref": "#/$defs/ActionResourceKind",
+          "default": "customer"
         },
         "target_plan": {
           "anyOf": [
@@ -60,6 +94,14 @@
       ],
       "title": "ActionProposal",
       "type": "object"
+    },
+    "ActionResourceKind": {
+      "enum": [
+        "customer",
+        "payment"
+      ],
+      "title": "ActionResourceKind",
+      "type": "string"
     },
     "Citation": {
       "additionalProperties": false,

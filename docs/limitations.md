@@ -1,15 +1,23 @@
 # Limitations
 
 - no live CRM, billing, email, or help-desk integration yet;
-- refund proposals do not yet bind to a real payment/charge object from a system of record;
+- refund proposals now bind to an explicit normalized payment snapshot, but the only billing
+  implementation in the repository is an in-memory reference adapter; there is no live
+  payment/charge system-of-record connector yet;
 - case-level canonicalization is keyed by `Ticket.id` and the exact persisted ticket payload;
   ResolveOps treats a repeated ID with changed content as an integrity conflict rather than a
   mutable case revision, so an upstream integration that edits cases in place needs an explicit
   immutable event/version identity contract;
 - an exact replay returns the already-created resolution transaction and intentionally does not
-  regenerate it from mutable customer-profile state; upstream authorization and mutable case
-  revisions therefore require their own integration contracts rather than changing replay
-  semantics;
+  regenerate it from mutable customer-profile or billing state; billing state is revalidated at
+  approval, while upstream authorization and mutable case revisions require their own integration
+  contracts rather than changing replay semantics;
+- approval-time payment verification does not eliminate the final time-of-check/time-of-use race
+  before an external financial provider call; a production adapter must enforce the provider's
+  current refund constraints as part of submission;
+- refund reconciliation intentionally cannot require the current payment snapshot to equal the
+  pre-side-effect digest because a successful or partially accepted refund can itself change the
+  payment's refunded amount or status;
 - concurrent duplicate ingestion can still repeat classification/retrieval/generation work
   before one canonical analysis wins the store transaction; persistence and downstream action
   identity remain deduplicated, but duplicate model/provider compute is not yet suppressed;
@@ -22,6 +30,8 @@
   the exact ticket payload digest and analysis digest; older `ticket.analyzed` events that lack
   `ticket_hash`, or multiple historical analyses for one ticket, are rejected at startup rather
   than guessed into a canonical resolution transaction;
+- legacy refund action payloads that lack payment resource binding remain decodable for
+  migration/forensics, but they are not executable or automatically reconcilable;
 - lexical retrieval is intentionally small and inspectable;
 - no identity provider or multi-tenant authorization boundary;
 - SQLite is a single-node persistence and coordination boundary;
@@ -32,8 +42,10 @@
   remains outside the current integrity boundary;
 - destructive actions remain human-gated.
 
-ResolveOps now prevents an identical support-case replay from creating a second internal
-resolution transaction: one `Ticket.id` is bound to one exact ticket payload and one canonical
-analysis. That internal guarantee does **not** establish idempotency at an external provider.
-Provider-level idempotency and reconciliation must still be proven by the specific adapter and
+ResolveOps prevents an identical support-case replay from creating a second internal resolution
+transaction: one `Ticket.id` is bound to one exact ticket payload and one canonical analysis. For
+refunds, the proposed action is additionally bound to one explicit payment identity and payment
+snapshot digest before review. These internal guarantees do **not** establish idempotency or
+financial correctness at an external provider. Provider-level idempotency, current-state
+validation, reconciliation, and authentication must still be proven by the specific adapter and
 provider contract before a live destructive-action connector is enabled.

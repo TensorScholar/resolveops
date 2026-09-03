@@ -2,8 +2,8 @@ from decimal import Decimal
 
 import pytest
 
-from resolveops.domain.models import ActionKind, IntentKind, Ticket
-from resolveops.domain.triage import classify_intent, propose_action
+from resolveops.domain.models import IntentKind, Ticket
+from resolveops.domain.triage import classify_intent, extract_refund_request, propose_action
 
 
 @pytest.mark.parametrize(
@@ -21,18 +21,33 @@ def test_classify_intent(message: str, expected: IntentKind) -> None:
     assert classify_intent(message) is expected
 
 
-def test_refund_action_extracts_money() -> None:
-    ticket = Ticket(customer_id="c1", message="Refund USD 49.95 please")
-    action = propose_action(ticket, IntentKind.REFUND)
-    assert action is not None
-    assert action.kind is ActionKind.REFUND
-    assert action.amount == Decimal("49.95")
+def test_refund_request_extracts_money() -> None:
+    amount, currency = extract_refund_request("Refund USD 49.95 please")
+    assert amount == Decimal("49.95")
+    assert currency == "usd"
 
 
 def test_refund_does_not_treat_unmarked_number_as_money() -> None:
-    action = propose_action(
-        Ticket(customer_id="c1", message="Refund order 12345"),
-        IntentKind.REFUND,
+    assert extract_refund_request("Refund order 12345") == (None, None)
+
+
+def test_refund_does_not_guess_between_distinct_money_values() -> None:
+    assert extract_refund_request("Charged $100; please refund $20") == (None, "usd")
+
+
+def test_repeated_same_money_value_remains_unambiguous() -> None:
+    assert extract_refund_request("Charged $49 twice; refund $49") == (
+        Decimal("49.00"),
+        "usd",
     )
-    assert action is not None
-    assert action.amount is None
+
+
+def test_oversized_refund_amount_fails_closed_without_decimal_error() -> None:
+    amount, currency = extract_refund_request(f"Refund ${'9' * 100}")
+    assert amount is None
+    assert currency == "usd"
+
+
+def test_triage_cannot_create_customer_targeted_refund_action() -> None:
+    ticket = Ticket(customer_id="c1", message="Refund $49.95")
+    assert propose_action(ticket, IntentKind.REFUND) is None

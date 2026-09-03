@@ -1,0 +1,73 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "amount": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 10000000000,
+          "minimum": 0,
+          "multipleOf": 0.01,
+          "type": "number"
+        },
+        {
+          "pattern": "^\\+?(?=.*\\d)0*(?:\\d{1,10}|\\d{0,10}\\.\\d{0,2}0*)$",
+          "type": "string"
+        }
+      ],
+      "title": "Amount"
+    },
+    "amount_refunded": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 10000000000,
+          "minimum": 0,
+          "multipleOf": 0.01,
+          "type": "number"
+        },
+        {
+          "pattern": "^\\+?(?=.*\\d)0*(?:\\d{1,10}|\\d{0,10}\\.\\d{0,2}0*)$",
+          "type": "string"
+        }
+      ],
+      "title": "Amount Refunded"
+    },
+    "currency": {
+      "pattern": "^[a-z]{3}$",
+      "title": "Currency",
+      "type": "string"
+    },
+    "customer_id": {
+      "maxLength": 320,
+      "minLength": 1,
+      "title": "Customer Id",
+      "type": "string"
+    },
+    "id": {
+      "maxLength": 320,
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "refundable": {
+      "title": "Refundable",
+      "type": "boolean"
+    },
+    "status": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "customer_id",
+    "amount",
+    "amount_refunded",
+    "currency",
+    "refundable",
+    "status"
+  ],
+  "title": "PaymentSnapshot",
+  "type": "object"
+}

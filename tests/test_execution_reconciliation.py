@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 import pytest
 
+from resolveops.adapters.billing import MemoryBillingReader
 from resolveops.adapters.generator import DeterministicResponseGenerator
 from resolveops.adapters.sqlite import SQLiteStore
 from resolveops.application.service import ResolveOpsService
@@ -15,6 +17,7 @@ from resolveops.domain.models import (
     ExecutionResult,
     ExecutionState,
     KnowledgeArticle,
+    PaymentSnapshot,
     Ticket,
 )
 
@@ -81,6 +84,19 @@ def build_service(path, executor) -> ResolveOpsService:
         store=SQLiteStore(path),
         generator=DeterministicResponseGenerator(),
         action_executor=executor,
+        billing_reader=MemoryBillingReader(
+            (
+                PaymentSnapshot(
+                    id="pay-c",
+                    customer_id="c",
+                    amount=Decimal("100.00"),
+                    amount_refunded=Decimal("0.00"),
+                    currency="usd",
+                    refundable=True,
+                    status="succeeded",
+                ),
+            )
+        ),
     )
     service.seed_customer(CustomerProfile(id="c"))
     service.seed_article(
@@ -95,11 +111,15 @@ def build_service(path, executor) -> ResolveOpsService:
     return service
 
 
+def refund_ticket() -> Ticket:
+    return Ticket(customer_id="c", message="Refund $10", payment_reference="pay-c")
+
+
 def test_process_termination_leaves_auditable_in_flight_execution(tmp_path) -> None:
     database = tmp_path / "crash.db"
     provider = FakeProvider()
     first = build_service(database, CrashAfterSideEffectExecutor(provider))
-    analysis = first.analyze(Ticket(customer_id="c", message="Refund $10"))
+    analysis = first.analyze(refund_ticket())
 
     with pytest.raises(SystemExit, match="simulated process termination"):
         first.review(analysis.id, reviewer="manager@example.com", approve=True)
@@ -110,6 +130,8 @@ def test_process_termination_leaves_auditable_in_flight_execution(tmp_path) -> N
     in_flight = executions[0]
     assert in_flight.state is ExecutionState.IN_FLIGHT
     assert in_flight.attempt_count == 1
+    assert in_flight.action.resource_id == "pay-c"
+    assert in_flight.action.resource_hash is not None
     assert persisted.get_approval(in_flight.approval_id) is not None
     attempt_events = [
         event
@@ -121,6 +143,8 @@ def test_process_termination_leaves_auditable_in_flight_execution(tmp_path) -> N
     assert attempt_events[0].payload["attempt_count"] == 1
     assert provider.effect_count == 1
 
+    # Reconciliation intentionally does not require the pre-side-effect billing
+    # snapshot to remain available: the side effect itself may have changed it.
     restarted = ResolveOpsService(
         store=persisted,
         generator=DeterministicResponseGenerator(),
@@ -140,7 +164,7 @@ def test_timeout_is_unknown_until_provider_reconciliation(tmp_path) -> None:
     database = tmp_path / "timeout.db"
     provider = FakeProvider()
     service = build_service(database, TimeoutAfterSideEffectExecutor(provider))
-    analysis = service.analyze(Ticket(customer_id="c", message="Refund $10"))
+    analysis = service.analyze(refund_ticket())
 
     _, uncertain = service.review(
         analysis.id,
