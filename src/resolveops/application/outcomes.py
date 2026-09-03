@@ -148,21 +148,18 @@ class ActionOutcomeService:
         stripe_signature_timestamp: int,
         unique_event_key: str,
     ) -> ActionOutcomeObservation | None:
-        """Use an authenticated Stripe event only as a trigger for an exact current-state read."""
+        """Use an authenticated Stripe event only as a trigger for an exact current-state read.
+
+        Provider-read failures deliberately propagate so the webhook event remains unclaimed and the
+        ingress can ask Stripe to retry. Manual observations use ``observe`` and may instead record
+        an explicit UNKNOWN fact.
+        """
         execution = self._verified_execution(execution_id)
         if execution.external_reference is None:
             raise InvalidTransitionError(
                 "execution must be reconciled to an external reference before outcome verification"
             )
-        try:
-            result = self.verifier.verify(execution)
-        except Exception:
-            result = ActionOutcomeResult(
-                state=ActionOutcomeState.UNKNOWN,
-                provider_reference=execution.external_reference,
-                provider_status=execution.provider_status,
-                message="Webhook-triggered outcome verification failed; investigation is required.",
-            )
+        result = self.verifier.verify(execution)
         return self._record_result(
             execution,
             result,
