@@ -56,7 +56,9 @@ class StripeProviderError(RuntimeError):
         self.request_id = request_id
         label = code or "provider_error"
         request_suffix = f" request_id={request_id}" if request_id else ""
-        super().__init__(f"Stripe request failed: status={status_code} code={label}{request_suffix}")
+        super().__init__(
+            f"Stripe request failed: status={status_code} code={label}{request_suffix}"
+        )
 
 
 class StripeProtocolError(RuntimeError):
@@ -389,9 +391,7 @@ class StripeRefundGateway:
             )
 
         if execution.external_reference is not None:
-            response = self._client.get(
-                f"refunds/{quote(execution.external_reference, safe='')}"
-            )
+            response = self._client.get(f"refunds/{quote(execution.external_reference, safe='')}")
             if not response.is_success:
                 raise self._provider_error(response)
             return self._execution_result_from_refund(
