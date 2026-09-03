@@ -1,7 +1,5 @@
 """Dedicated FastAPI ingress for authenticated Stripe webhooks."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from resolveops.domain.errors import IntegrityError, NotFoundError
