@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import re
 
 import pytest
 from pydantic import ValidationError
@@ -31,6 +32,15 @@ def test_extra_fields_rejected() -> None:
 def test_naive_timestamp_rejected() -> None:
     with pytest.raises(ValidationError):
         Ticket(customer_id="c", message="x", received_at=datetime.now())
+
+
+def test_action_resource_id_cannot_be_empty() -> None:
+    with pytest.raises(ValidationError):
+        ActionProposal(
+            kind=ActionKind.REFUND,
+            resource_id="",
+            reason="invalid empty target",
+        )
 
 
 @pytest.mark.parametrize("missing", ["amount_refunded", "refundable", "status"])
@@ -74,6 +84,17 @@ def test_payment_currency_must_be_lowercase_three_letter_code() -> None:
             refundable=True,
             status="succeeded",
         )
+
+
+def test_payment_schema_rejects_negative_decimal_strings() -> None:
+    schema = PaymentSnapshot.model_json_schema()
+    amount_schema = schema["properties"]["amount_refunded"]
+    string_variant = next(
+        item for item in amount_schema["anyOf"] if item.get("type") == "string"
+    )
+    pattern = string_variant["pattern"]
+    assert re.fullmatch(pattern, "1.00") is not None
+    assert re.fullmatch(pattern, "-1.00") is None
 
 
 def test_payment_remaining_refundable_is_exact_decimal() -> None:
