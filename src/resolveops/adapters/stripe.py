@@ -36,7 +36,6 @@ _ZERO_DECIMAL_CURRENCIES = frozenset(
         "mga",
         "pyg",
         "rwf",
-        "ugx",
         "vnd",
         "vuv",
         "xaf",
@@ -44,7 +43,17 @@ _ZERO_DECIMAL_CURRENCIES = frozenset(
         "xpf",
     }
 )
-_RETRY_WITH_SAME_KEY_STATUS_CODES = frozenset({401, 403, 409, 429})
+_CONNECT_CHARGE_FIELDS = (
+    "application",
+    "application_fee",
+    "application_fee_amount",
+    "on_behalf_of",
+    "source_transfer",
+    "transfer",
+    "transfer_data",
+    "transfer_group",
+)
+_RECOVERABLE_RESPONSE_STATUS_CODES = frozenset({409, 424, 429})
 
 
 class StripeProviderError(RuntimeError):
@@ -161,6 +170,10 @@ class StripeRefundGateway:
         return value
 
     @staticmethod
+    def _charge_uses_connect(payload: dict[str, object]) -> bool:
+        return any(payload.get(key) is not None for key in _CONNECT_CHARGE_FIELDS)
+
+    @staticmethod
     def _currency_exponent(currency: str) -> int:
         return 0 if currency in _ZERO_DECIMAL_CURRENCIES else 2
 
@@ -211,9 +224,11 @@ class StripeRefundGateway:
         paid = self._required_bool(payload, "paid", label="Charge")
         disputed = self._required_bool(payload, "disputed", label="Charge")
         status = self._required_str(payload, "status", label="Charge")
+        supported_live_boundary = currency == "usd" and not self._charge_uses_connect(payload)
 
         refundable = (
-            captured
+            supported_live_boundary
+            and captured
             and paid
             and not disputed
             and status == "succeeded"
@@ -237,7 +252,7 @@ class StripeRefundGateway:
             and action.resource_id.startswith("ch_")
             and action.resource_hash is not None
             and action.amount is not None
-            and action.currency is not None
+            and action.currency == "usd"
         )
 
     @staticmethod
@@ -334,7 +349,9 @@ class StripeRefundGateway:
         if not self._valid_refund_action(action):
             return ExecutionResult(
                 state=ExecutionState.FAILED,
-                message="Stripe refund action is not bound to a verified Charge and amount.",
+                message=(
+                    "Stripe refund action is outside the supported verified USD Charge boundary."
+                ),
             )
         assert action.amount is not None
         assert action.currency is not None
@@ -345,6 +362,7 @@ class StripeRefundGateway:
                 state=ExecutionState.FAILED,
                 message="Stripe refund amount cannot be represented safely in the Charge currency.",
             )
+
         data = self._refund_form(
             action,
             analysis_id=approval.analysis_id,
@@ -357,7 +375,10 @@ class StripeRefundGateway:
             data=data,
             headers={"Idempotency-Key": idempotency_key},
         )
-        if response.status_code >= 500 or response.status_code in _RETRY_WITH_SAME_KEY_STATUS_CODES:
+        if (
+            response.status_code >= 500
+            or response.status_code in _RECOVERABLE_RESPONSE_STATUS_CODES
+        ):
             raise self._provider_error(response)
         if not response.is_success:
             code = self._error_code(response) or "request_rejected"
@@ -378,7 +399,9 @@ class StripeRefundGateway:
         if not self._valid_refund_action(action):
             return ExecutionResult(
                 state=ExecutionState.FAILED,
-                message="Stripe refund execution is not bound to a verified Charge and amount.",
+                message=(
+                    "Stripe refund execution is outside the supported verified USD Charge boundary."
+                ),
             )
         assert action.amount is not None
         assert action.currency is not None
@@ -425,7 +448,10 @@ class StripeRefundGateway:
             data=data,
             headers={"Idempotency-Key": execution.idempotency_key},
         )
-        if response.status_code >= 500 or response.status_code in _RETRY_WITH_SAME_KEY_STATUS_CODES:
+        if (
+            response.status_code >= 500
+            or response.status_code in _RECOVERABLE_RESPONSE_STATUS_CODES
+        ):
             raise self._provider_error(response)
         if not response.is_success:
             code = self._error_code(response) or "request_rejected"
