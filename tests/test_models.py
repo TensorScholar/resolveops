@@ -89,9 +89,7 @@ def test_payment_currency_must_be_lowercase_three_letter_code() -> None:
 def test_payment_schema_rejects_negative_decimal_strings() -> None:
     schema = PaymentSnapshot.model_json_schema()
     amount_schema = schema["properties"]["amount_refunded"]
-    string_variant = next(
-        item for item in amount_schema["anyOf"] if item.get("type") == "string"
-    )
+    string_variant = next(item for item in amount_schema["anyOf"] if item.get("type") == "string")
     pattern = string_variant["pattern"]
     assert re.fullmatch(pattern, "1.00") is not None
     assert re.fullmatch(pattern, "-1.00") is None
