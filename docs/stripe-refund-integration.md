@@ -21,11 +21,28 @@ charges, chooses a latest payment, or matches a charge by amount/date heuristics
 A missing customer identity or malformed/mismatched provider object is an integration contract
 failure, not a reason to manufacture optimistic financial state.
 
+### First live-execution boundary
+
+The first executable Stripe wedge is deliberately narrower than the read model:
+
+- only USD Charge refunds are executable;
+- Stripe Connect charge topologies are fail-closed for execution. Any non-null Connect marker such
+  as `application`, `application_fee`, `application_fee_amount`, `on_behalf_of`,
+  `source_transfer`, `transfer`, `transfer_data`, or `transfer_group` makes the normalized payment
+  non-refundable through this adapter;
+- non-USD Charges may still be normalized as billing evidence, but are not live-executable by this
+  wedge.
+
+ResolveOps does not currently implement Connect-specific refund semantics such as application-fee
+refunds or transfer reversals. Broad currency and Connect support must earn their way in through
+separate provider evidence rather than being implied by a generic adapter.
+
 ## Submission-time correctness
 
 Approval-time payment snapshot validation remains useful evidence, but it cannot atomically cover a
-later remote provider call. The Stripe adapter therefore does **not** claim that a second local read
-eliminates the final time-of-check/time-of-use interval.
+later remote provider call. The Stripe adapter therefore does **not** add a second local Charge read
+and does not claim that repeated observation eliminates the final time-of-check/time-of-use
+interval.
 
 The actual refund POST targets the exact approved Charge and amount. Stripe's Refunds API enforces
 its current remaining-refundable constraint when the refund request executes: an entirely refunded
@@ -44,6 +61,31 @@ The Stripe secret key is constructor-injected into the HTTP client only. It is n
 objects, audit events, action metadata, or idempotency keys. The Stripe API version is also an
 explicit constructor argument so a production integration cannot silently depend on whichever API
 version an account happens to use.
+
+## Provider error semantics
+
+ResolveOps distinguishes a rejected request from an indeterminate operation:
+
+- `401`/`403` authentication or permission failures are terminal failures for that attempt and are
+  not added to reconciliation noise;
+- `409`, `424`, `429`, and `5xx` responses preserve uncertainty and must keep the same operation
+  identity for retry/reconciliation;
+- network failures are also indeterminate; callers retain the same idempotency identity rather than
+  inventing a new request;
+- deterministic `4xx` request rejections such as an already-refunded Charge are recorded as failed
+  immutable requests.
+
+Provider error messages are sanitized before entering ResolveOps state. Request IDs and stable error
+codes may be retained for investigation; arbitrary remote diagnostic text is not copied into domain
+or audit messages.
+
+## Currency normalization
+
+Stripe's Charge API uses smallest currency units, with documented special cases. ResolveOps keeps
+this conversion explicit and tested. For example, JPY uses zero-decimal Charge amounts, while UGX
+Charge API amounts retain Stripe's backwards-compatible two-decimal representation. Correct
+normalization does not imply that the currency is live-executable: the first refund wedge remains
+USD-only.
 
 ## Ambiguous-response recovery
 
@@ -92,13 +134,18 @@ state.
 The repository's HTTP contract tests can prove ResolveOps behavior for:
 
 - exact Charge lookup and identity rejection;
-- captured/refunded amount normalization, including zero-decimal currencies;
+- captured/refunded amount normalization, including Stripe currency special cases;
+- USD-only live-execution scope and fail-closed Stripe Connect detection;
 - dispute/refundability mapping;
+- explicit configuration validation and HTTPS-only provider base URLs;
 - exact refund request body and idempotency header;
+- authentication/permission versus recoverable/indeterminate provider error classification;
+- sanitized provider failures without arbitrary remote error-message persistence;
 - provider-current request rejection handling;
 - timeout after a simulated provider side effect followed by same-body/same-key recovery;
 - refusal to replay an ambiguous old request outside the safe idempotency window;
 - exact known-refund reconciliation by GET;
+- explicit execution/outcome status mappings, including unknown future provider states;
 - a later provider outcome observation changing after execution was already successful.
 
 These tests use an in-process HTTP transport. They prove our contract logic, not Stripe's live
@@ -109,7 +156,7 @@ behavior.
 Live/stable financial readiness remains **NO-GO** until Stripe test mode provides retained evidence
 for at least:
 
-1. exact Charge read and ownership mapping using the pinned API version;
+1. exact non-Connect USD Charge read and ownership mapping using the pinned API version;
 2. successful partial refund;
 3. over-refund / already-refunded current-state rejection;
 4. ambiguous-response recovery with the same idempotency key and no duplicate refund;
