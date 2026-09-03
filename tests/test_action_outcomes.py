@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from resolveops.application.outcomes import ActionOutcomeService
+from resolveops.domain.audit import make_event
 from resolveops.domain.errors import IntegrityError
 from resolveops.domain.models import ExecutionState, Ticket
 from resolveops.domain.outcomes import ActionOutcomeResult, ActionOutcomeState
@@ -110,3 +111,36 @@ def test_verifier_cannot_substitute_provider_operation(service) -> None:
         outcomes.observe(execution.id)
 
     assert len(service.store.list_audit()) == before
+
+
+def test_outcome_projection_metadata_must_match_canonical_observation(service) -> None:
+    execution = successful_execution(service)
+    outcomes = ActionOutcomeService(
+        store=service.store,
+        verifier=SequencedVerifier(
+            results=[
+                ActionOutcomeResult(
+                    state=ActionOutcomeState.VERIFIED,
+                    provider_reference=execution.external_reference,
+                    provider_status="succeeded",
+                    message="Provider currently reports success.",
+                )
+            ]
+        ),
+    )
+    outcomes.observe(execution.id)
+
+    event = service.store.audit[-1]
+    payload = dict(event.payload)
+    payload["state"] = ActionOutcomeState.FAILED.value
+    service.store.audit[-1] = make_event(
+        sequence=event.sequence,
+        event_type=event.event_type,
+        entity_id=event.entity_id,
+        payload=payload,
+        previous_hash=event.previous_hash,
+        occurred_at=event.occurred_at,
+    )
+
+    with pytest.raises(IntegrityError, match="does not match its audit evidence"):
+        outcomes.list_observations(execution.id)
