@@ -60,6 +60,12 @@ class Store(Protocol):
     def append_audit_event(
         self, event_type: str, entity_id: str, payload: dict[str, object]
     ) -> AuditEvent: ...
+    def list_audit(self) -> list[AuditEvent]: ...
+
+
+class IdempotentAuditStore(Store, Protocol):
+    """Store capability for atomically claiming one external event and appending its audit fact."""
+
     def append_audit_event_once(
         self,
         unique_key: str,
@@ -67,7 +73,6 @@ class Store(Protocol):
         entity_id: str,
         payload: dict[str, object],
     ) -> AuditEvent | None: ...
-    def list_audit(self) -> list[AuditEvent]: ...
 
 
 class BillingReader(Protocol):
