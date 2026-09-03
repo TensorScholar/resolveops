@@ -18,6 +18,7 @@ from resolveops.domain.models import (
     PaymentSnapshot,
     Ticket,
 )
+from resolveops.domain.outcomes import ActionOutcomeResult
 
 
 class Store(Protocol):
@@ -87,3 +88,9 @@ class ActionExecutor(Protocol):
     ) -> ExecutionResult: ...
 
     def reconcile(self, execution: ActionExecution) -> ExecutionResult: ...
+
+
+class ActionOutcomeVerifier(Protocol):
+    """Read the current external/customer outcome for an already-identified operation."""
+
+    def verify(self, execution: ActionExecution) -> ActionOutcomeResult: ...
