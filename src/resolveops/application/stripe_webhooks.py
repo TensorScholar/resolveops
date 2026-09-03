@@ -12,7 +12,7 @@ from typing import cast
 from resolveops.application.outcomes import ActionOutcomeService
 from resolveops.domain.errors import IntegrityError, NotFoundError
 from resolveops.domain.models import ActionExecution
-from resolveops.ports.interfaces import ActionOutcomeVerifier, Store
+from resolveops.ports.interfaces import ActionOutcomeVerifier, IdempotentAuditStore
 
 
 class StripeWebhookSignatureError(ValueError):
@@ -31,7 +31,7 @@ class StripeWebhookProcessor:
     def __init__(
         self,
         *,
-        store: Store,
+        store: IdempotentAuditStore,
         verifier: ActionOutcomeVerifier,
         endpoint_secret: str,
         expected_livemode: bool,
@@ -98,12 +98,6 @@ class StripeWebhookProcessor:
             raise StripeWebhookProtocolError(f"Stripe webhook event has invalid {key}")
         return value
 
-    def _already_processed(self, event_id: str) -> bool:
-        for event in self._store.list_audit():
-            if event.payload.get("stripe_event_id") == event_id:
-                return True
-        return False
-
     def _execution_for_refund(self, refund_id: str) -> ActionExecution:
         matches = [
             execution
@@ -129,8 +123,6 @@ class StripeWebhookProcessor:
             raise StripeWebhookProtocolError("Stripe webhook livemode does not match deployment")
         if event_type not in self._SUPPORTED_EVENT_TYPES:
             return {"status": "ignored", "event_id": event_id}
-        if self._already_processed(event_id):
-            return {"status": "duplicate", "event_id": event_id}
 
         data = event.get("data")
         if not isinstance(data, dict):
@@ -141,12 +133,16 @@ class StripeWebhookProcessor:
         refund_id = self._required_str(cast(dict[str, object], raw_object), "id")
         execution = self._execution_for_refund(refund_id)
 
+        unique_event_key = f"stripe:{int(self._expected_livemode)}:{event_id}"
         observation = self._outcomes.observe_external(
             execution.id,
             stripe_event_id=event_id,
             stripe_event_type=event_type,
             stripe_signature_timestamp=signature_timestamp,
+            unique_event_key=unique_event_key,
         )
+        if observation is None:
+            return {"status": "duplicate", "event_id": event_id}
         return {
             "status": "processed",
             "event_id": event_id,
