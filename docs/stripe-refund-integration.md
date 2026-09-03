@@ -129,9 +129,56 @@ The current state mapping is:
 not an immutable terminal truth. Later observations remain append-only and may report a different
 state.
 
+## Authenticated Stripe webhook ingress
+
+ResolveOps has a dedicated Stripe-only webhook ingress rather than adding financial ingress to the
+broader reference support API. The application verifies the exact raw request body before parsing
+JSON:
+
+1. parse Stripe's `t=` timestamp and one or more `v1=` signatures from `Stripe-Signature`;
+2. compute HMAC-SHA256 over `timestamp + "." + raw_body` using the explicitly injected endpoint
+   secret and compare signatures in constant time;
+3. reject signatures outside the bounded timestamp tolerance;
+4. require the event's `livemode` flag to match the configured deployment mode;
+5. accept only `refund.created`, `refund.updated`, and `refund.failed` as outcome triggers;
+6. require the embedded refund ID to map to exactly one persisted ResolveOps execution;
+7. **do not trust the webhook's embedded refund status**. The signed event only triggers an exact
+   provider-current refund read through `ActionOutcomeVerifier`;
+8. append the resulting outcome observation to the audit chain only after atomically claiming the
+   Stripe event identity.
+
+This design intentionally separates authenticity from truth. A valid signature proves Stripe signed
+the delivered bytes; it does not prove that an older payload is still the provider's current refund
+state. Exact provider retrieval supplies the current observation.
+
+### Webhook replay and concurrency
+
+`MemoryStore` mirrors event claims under its process lock. Persistent webhook deployments use
+`SQLiteWebhookStore`, which adds a unique `external_event_claims` record and writes that claim plus
+the `action.outcome_observed` event inside one serialized SQLite transaction. Concurrent or retried
+delivery of the same Stripe event may repeat the read-only provider lookup, but at most one outcome
+observation is committed.
+
+A valid refund event can arrive before the corresponding local execution has learned/persisted its
+Stripe refund ID. The dedicated HTTP ingress returns `503` for that race so Stripe can retry rather
+than silently losing the trigger. Integrity conflicts return a generic `409`; invalid signatures or
+protocol violations return a generic `400`. Internal exception details are not reflected to the
+provider.
+
+The ingress currently bounds the accepted signature header and request body in application code.
+Production infrastructure must also enforce request-size and rate limits before the ASGI process;
+the application-level body limit does not prevent the server from receiving a large body first.
+
+### Webhook secret rotation boundary
+
+The signature parser accepts multiple `v1` values in one Stripe signature header and succeeds when
+any value matches the configured endpoint secret. The application currently accepts **one configured
+endpoint secret**, however; overlapping rotation between distinct old/new endpoint secrets is not
+yet modeled as a first-class deployment capability.
+
 ## What deterministic CI proves
 
-The repository's HTTP contract tests can prove ResolveOps behavior for:
+The repository's HTTP and application contract tests can prove ResolveOps behavior for:
 
 - exact Charge lookup and identity rejection;
 - captured/refunded amount normalization, including Stripe currency special cases;
@@ -146,10 +193,15 @@ The repository's HTTP contract tests can prove ResolveOps behavior for:
 - refusal to replay an ambiguous old request outside the safe idempotency window;
 - exact known-refund reconciliation by GET;
 - explicit execution/outcome status mappings, including unknown future provider states;
-- a later provider outcome observation changing after execution was already successful.
+- a later provider outcome observation changing after execution was already successful;
+- raw-body webhook signature verification and bounded replay timestamp checks;
+- multiple `v1` signature handling, test/live event separation, and unsupported-event filtering;
+- exact webhook refund-to-execution binding without trusting webhook status;
+- duplicate and concurrent Stripe event delivery committing at most one outcome observation;
+- dedicated webhook HTTP failure mapping and response-detail sanitization.
 
-These tests use an in-process HTTP transport. They prove our contract logic, not Stripe's live
-behavior.
+These tests use in-process HTTP transports and synthetic signed webhook payloads. They prove our
+contract logic, not Stripe's live behavior.
 
 ## External evidence still required
 
@@ -162,9 +214,14 @@ for at least:
 4. ambiguous-response recovery with the same idempotency key and no duplicate refund;
 5. `pending` / `requires_action` / `failed` lifecycle handling where test fixtures permit it;
 6. refund retrieval after submission and post-action observation;
-7. webhook signature verification and replay handling before webhooks become an enabled production
-   ingestion path.
+7. actual Stripe webhook delivery, retry behavior, signature verification, event-to-refund binding,
+   duplicate delivery handling, and provider-current outcome refresh through the dedicated ingress.
 
-The current reference FastAPI application remains unauthenticated and therefore does not wire live
-Stripe destructive execution. Deployment identity, authorization, secret rotation, tenant
-isolation, and optional AgentGuard runtime authorization remain separate production gates.
+The connected Stripe session available during development is test mode, but it currently has no
+Charge fixture and the connector surface available to this session does not expose the operation
+needed to create a PaymentIntent/Charge fixture. That is an external evidence/setup blocker, not a
+reason to replace provider evidence with additional mocks.
+
+Deployment identity, authorization, endpoint-secret rotation, infrastructure rate limiting,
+network policy, tenant isolation, and optional AgentGuard runtime authorization remain separate
+production gates.
