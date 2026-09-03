@@ -142,6 +142,8 @@ class ActionOutcomeService:
             if (
                 event.payload.get("execution_id") != execution.id
                 or event.payload.get("provider_reference") != observation.provider_reference
+                or event.payload.get("state") != observation.state.value
+                or event.payload.get("provider_status") != observation.provider_status
                 or event.payload.get("action_hash") != expected_action_hash
                 or event.payload.get("idempotency_key_hash") != expected_key_hash
                 or event.payload.get("observation_hash")
