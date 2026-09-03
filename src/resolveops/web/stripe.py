@@ -1,11 +1,11 @@
 """Dedicated FastAPI ingress for authenticated Stripe webhooks."""
 
-from typing import TYPE_CHECKING
-
+from resolveops.application.stripe_webhooks import (
+    StripeWebhookProcessor,
+    StripeWebhookProtocolError,
+    StripeWebhookSignatureError,
+)
 from resolveops.domain.errors import IntegrityError, NotFoundError
-
-if TYPE_CHECKING:
-    from resolveops.application.stripe_webhooks import StripeWebhookProcessor
 
 _MAX_WEBHOOK_BODY_BYTES = 256 * 1024
 _MAX_SIGNATURE_HEADER_BYTES = 8 * 1024
@@ -17,11 +17,6 @@ def create_stripe_webhook_app(processor: StripeWebhookProcessor) -> object:
         from fastapi import FastAPI, HTTPException, Request
     except ImportError as exc:
         raise RuntimeError("Install ResolveOps with the 'web' extra.") from exc
-
-    from resolveops.application.stripe_webhooks import (
-        StripeWebhookProtocolError,
-        StripeWebhookSignatureError,
-    )
 
     app = FastAPI(title="ResolveOps Stripe Webhook")
 
