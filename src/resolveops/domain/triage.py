@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from resolveops.domain.models import ActionKind, ActionProposal, IntentKind, Ticket
 
@@ -33,12 +33,20 @@ def classify_intent(message: str) -> IntentKind:
 
 
 def extract_refund_request(message: str) -> tuple[Decimal | None, str | None]:
-    """Extract one unambiguous explicit USD amount; never guess among distinct values."""
+    """Extract one unambiguous explicit USD amount; never guess among invalid values."""
     matches = list(_MONEY.finditer(message))
     if not matches:
         return None, None
 
-    amounts = {Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches}
+    try:
+        amounts = {
+            Decimal(match.group("amount")).quantize(Decimal("0.01")) for match in matches
+        }
+    except InvalidOperation:
+        # The message still explicitly names USD, but the amount is outside the supported
+        # decimal envelope. Preserve the currency signal while making the amount non-executable.
+        return None, "usd"
+
     if len(amounts) != 1:
         return None, "usd"
     return next(iter(amounts)), "usd"
