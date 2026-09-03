@@ -123,9 +123,7 @@ def test_configuration_fails_closed(kwargs: dict[str, object], message: str) -> 
     base: dict[str, object] = {
         "secret_key": "sk_test_hardening",
         "api_version": API_VERSION,
-        "transport": httpx.MockTransport(
-            lambda request: httpx.Response(500, request=request)
-        ),
+        "transport": httpx.MockTransport(lambda request: httpx.Response(500, request=request)),
     }
     base.update(kwargs)
     with pytest.raises(ValueError, match=message):
