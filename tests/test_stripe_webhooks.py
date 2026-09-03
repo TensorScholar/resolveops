@@ -24,7 +24,7 @@ from resolveops.domain.errors import IntegrityError, NotFoundError
 from resolveops.domain.models import CustomerProfile, KnowledgeArticle, PaymentSnapshot, Ticket
 from resolveops.domain.outcomes import ActionOutcomeResult, ActionOutcomeState
 
-_SECRET = "whsec_test_only"
+_SECRET = "webhook-test-secret"
 _NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
 
 
@@ -60,7 +60,12 @@ def _successful_execution(service: ResolveOpsService):
     return execution
 
 
-def _event(refund_id: str, *, event_id: str = "evt_1", event_type: str = "refund.updated") -> bytes:
+def _event(
+    refund_id: str,
+    *,
+    event_id: str = "evt_1",
+    event_type: str = "refund.updated",
+) -> bytes:
     return json.dumps(
         {
             "id": event_id,
@@ -117,7 +122,9 @@ def test_signed_webhook_triggers_current_provider_read_not_payload_status(servic
     assert result["outcome"] == "verified"
     assert verifier.calls == 1
     outcome_events = [
-        event for event in service.store.list_audit() if event.event_type == "action.outcome_observed"
+        event
+        for event in service.store.list_audit()
+        if event.event_type == "action.outcome_observed"
     ]
     assert len(outcome_events) == 1
     assert outcome_events[0].payload["stripe_event_id"] == "evt_1"
@@ -145,9 +152,16 @@ def test_duplicate_event_is_committed_once(service) -> None:
     assert first["status"] == "processed"
     assert second == {"status": "duplicate", "event_id": "evt_1"}
     assert verifier.calls == 2
-    assert len(
-        [event for event in service.store.list_audit() if event.event_type == "action.outcome_observed"]
-    ) == 1
+    assert (
+        len(
+            [
+                event
+                for event in service.store.list_audit()
+                if event.event_type == "action.outcome_observed"
+            ]
+        )
+        == 1
+    )
 
 
 def test_invalid_signature_and_timestamp_replay_are_rejected(service) -> None:
@@ -209,9 +223,16 @@ def test_provider_read_failure_is_audited_as_unknown_and_deduplicated(service) -
 
     assert first["outcome"] == "unknown"
     assert second["status"] == "duplicate"
-    assert len(
-        [event for event in service.store.list_audit() if event.event_type == "action.outcome_observed"]
-    ) == 1
+    assert (
+        len(
+            [
+                event
+                for event in service.store.list_audit()
+                if event.event_type == "action.outcome_observed"
+            ]
+        )
+        == 1
+    )
 
 
 def test_provider_cannot_substitute_refund_identity(service) -> None:
