@@ -60,6 +60,13 @@ class Store(Protocol):
     def append_audit_event(
         self, event_type: str, entity_id: str, payload: dict[str, object]
     ) -> AuditEvent: ...
+    def append_audit_event_once(
+        self,
+        unique_key: str,
+        event_type: str,
+        entity_id: str,
+        payload: dict[str, object],
+    ) -> AuditEvent | None: ...
     def list_audit(self) -> list[AuditEvent]: ...
 
 
