@@ -15,6 +15,10 @@ from resolveops.domain.outcomes import (
 from resolveops.ports.interfaces import ActionOutcomeVerifier, IdempotentAuditStore, Store
 
 
+class OutcomeVerificationUnavailableError(RuntimeError):
+    """A provider-current outcome read failed before an external event was claimed."""
+
+
 class ActionOutcomeService:
     """Observe external outcomes without mutating the command execution ledger."""
 
@@ -146,20 +150,26 @@ class ActionOutcomeService:
         stripe_event_id: str,
         stripe_event_type: str,
         stripe_signature_timestamp: int,
+        external_event_identity_hash: str,
         unique_event_key: str,
     ) -> ActionOutcomeObservation | None:
-        """Use an authenticated Stripe event only as a trigger for an exact current-state read.
+        """Use an authenticated Stripe event only as a trigger for a provider-current read.
 
-        Provider-read failures deliberately propagate so the webhook event remains unclaimed and the
-        ingress can ask Stripe to retry. Manual observations use ``observe`` and may instead record
-        an explicit UNKNOWN fact.
+        Unlike manual observation, verifier failures do not create UNKNOWN facts here. The event
+        remains unclaimed so the ingress can return a retryable response and a later delivery can
+        perform a fresh provider read.
         """
         execution = self._verified_execution(execution_id)
         if execution.external_reference is None:
             raise InvalidTransitionError(
                 "execution must be reconciled to an external reference before outcome verification"
             )
-        result = self.verifier.verify(execution)
+        try:
+            result = self.verifier.verify(execution)
+        except Exception as exc:
+            raise OutcomeVerificationUnavailableError(
+                "provider-current outcome verification is unavailable"
+            ) from exc
         return self._record_result(
             execution,
             result,
@@ -167,6 +177,7 @@ class ActionOutcomeService:
                 "stripe_event_id": stripe_event_id,
                 "stripe_event_type": stripe_event_type,
                 "stripe_signature_timestamp": stripe_signature_timestamp,
+                "external_event_identity_hash": external_event_identity_hash,
             },
             unique_event_key=unique_event_key,
         )
