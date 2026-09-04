@@ -34,18 +34,22 @@ class StripeWebhookProcessor:
         *,
         store: IdempotentAuditStore,
         verifier: ActionOutcomeVerifier,
-        endpoint_secret: str,
+        endpoint_secrets: tuple[str, ...],
         expected_livemode: bool,
         tolerance: timedelta = timedelta(minutes=5),
         now: Callable[[], datetime] | None = None,
     ) -> None:
-        if not endpoint_secret.strip():
-            raise ValueError("Stripe webhook endpoint secret must not be empty")
+        if not endpoint_secrets:
+            raise ValueError("at least one Stripe webhook endpoint secret is required")
+        if any(not secret.strip() for secret in endpoint_secrets):
+            raise ValueError("Stripe webhook endpoint secrets must not be empty")
+        if len(set(endpoint_secrets)) != len(endpoint_secrets):
+            raise ValueError("Stripe webhook endpoint secrets must be unique")
         if tolerance <= timedelta(0):
             raise ValueError("Stripe webhook signature tolerance must be positive")
         self._store = store
         self._outcomes = ActionOutcomeService(store=store, verifier=verifier)
-        self._secret = endpoint_secret.encode()
+        self._secrets = tuple(secret.encode() for secret in endpoint_secrets)
         self._expected_livemode = expected_livemode
         self._tolerance = tolerance
         self._now = now or (lambda: datetime.now(UTC))
@@ -77,8 +81,13 @@ class StripeWebhookProcessor:
             raise StripeWebhookSignatureError("Stripe webhook timestamp is outside tolerance")
 
         signed_payload = str(timestamp).encode() + b"." + body
-        expected = hmac.new(self._secret, signed_payload, hashlib.sha256).hexdigest()
-        if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
+        matched = False
+        for secret in self._secrets:
+            expected = hmac.new(secret, signed_payload, hashlib.sha256).hexdigest()
+            for candidate in signatures:
+                candidate_matches = hmac.compare_digest(expected, candidate)
+                matched = candidate_matches or matched
+        if not matched:
             raise StripeWebhookSignatureError("Stripe webhook signature mismatch")
         return timestamp
 
