@@ -16,3 +16,11 @@ dist/
 .demo/
 .env
 .DS_Store
+
+# ResolveOps Stripe evidence runs (never commit raw provider evidence)
+evidence/
+evidence-private/
+*-evidence/
+stripe-listen.log
+webhooks.jsonl
+tee-log.jsonl
