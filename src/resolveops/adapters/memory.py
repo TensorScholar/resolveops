@@ -273,7 +273,9 @@ class MemoryStore:
             existing = self._audit_event_claims.get(unique_key)
             if existing is not None:
                 if existing != claim:
-                    raise IntegrityError("external event identity was reused for conflicting content")
+                    raise IntegrityError(
+                        "external event identity was reused for conflicting content"
+                    )
                 return None
             event = self._append_draft_locked(
                 AuditEventDraft(
