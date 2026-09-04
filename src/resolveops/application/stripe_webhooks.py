@@ -34,22 +34,31 @@ class StripeWebhookProcessor:
         *,
         store: IdempotentAuditStore,
         verifier: ActionOutcomeVerifier,
-        endpoint_secrets: tuple[str, ...],
         expected_livemode: bool,
+        endpoint_secret: str | None = None,
+        endpoint_secrets: tuple[str, ...] | None = None,
         tolerance: timedelta = timedelta(minutes=5),
         now: Callable[[], datetime] | None = None,
     ) -> None:
-        if not endpoint_secrets:
+        if (endpoint_secret is None) == (endpoint_secrets is None):
+            raise ValueError(
+                "configure exactly one Stripe webhook secret or endpoint-secret set"
+            )
+        configured_secrets = (
+            (endpoint_secret,) if endpoint_secret is not None else endpoint_secrets
+        )
+        assert configured_secrets is not None
+        if not configured_secrets:
             raise ValueError("at least one Stripe webhook endpoint secret is required")
-        if any(not secret.strip() for secret in endpoint_secrets):
+        if any(not secret.strip() for secret in configured_secrets):
             raise ValueError("Stripe webhook endpoint secrets must not be empty")
-        if len(set(endpoint_secrets)) != len(endpoint_secrets):
+        if len(set(configured_secrets)) != len(configured_secrets):
             raise ValueError("Stripe webhook endpoint secrets must be unique")
         if tolerance <= timedelta(0):
             raise ValueError("Stripe webhook signature tolerance must be positive")
         self._store = store
         self._outcomes = ActionOutcomeService(store=store, verifier=verifier)
-        self._secrets = tuple(secret.encode() for secret in endpoint_secrets)
+        self._secrets = tuple(secret.encode() for secret in configured_secrets)
         self._expected_livemode = expected_livemode
         self._tolerance = tolerance
         self._now = now or (lambda: datetime.now(UTC))
