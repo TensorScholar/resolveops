@@ -157,13 +157,33 @@ class ActionOutcomeService:
 
         Unlike manual observation, verifier failures do not create UNKNOWN facts here. The event
         remains unclaimed so the ingress can return a retryable response and a later delivery can
-        perform a fresh provider read.
+        perform a fresh provider read. A previously claimed event key must also carry the same
+        immutable provider-event identity; reuse for a different refund/type fails closed.
         """
         execution = self._verified_execution(execution_id)
         if execution.external_reference is None:
             raise InvalidTransitionError(
                 "execution must be reconciled to an external reference before outcome verification"
             )
+
+        matching_claims = [
+            event
+            for event in self.store.list_audit()
+            if event.event_type == "action.outcome_observed"
+            and event.payload.get("external_event_unique_key") == unique_event_key
+        ]
+        if matching_claims:
+            if len(matching_claims) != 1:
+                raise IntegrityError("external event identity has multiple audit claims")
+            existing = matching_claims[0]
+            if (
+                existing.entity_id != execution.id
+                or existing.payload.get("external_event_identity_hash")
+                != external_event_identity_hash
+            ):
+                raise IntegrityError("external event identity was reused for conflicting content")
+            return None
+
         try:
             result = self.verifier.verify(execution)
         except Exception as exc:
@@ -177,6 +197,7 @@ class ActionOutcomeService:
                 "stripe_event_id": stripe_event_id,
                 "stripe_event_type": stripe_event_type,
                 "stripe_signature_timestamp": stripe_signature_timestamp,
+                "external_event_unique_key": unique_event_key,
                 "external_event_identity_hash": external_event_identity_hash,
             },
             unique_event_key=unique_event_key,
