@@ -1,5 +1,6 @@
 """Dedicated FastAPI ingress for authenticated Stripe webhooks."""
 
+from resolveops.application.outcomes import OutcomeVerificationUnavailableError
 from resolveops.application.stripe_webhooks import (
     StripeWebhookProcessor,
     StripeWebhookProtocolError,
@@ -36,12 +37,13 @@ def create_stripe_webhook_app(processor: StripeWebhookProcessor) -> object:
             return processor.process(body, signature)
         except (StripeWebhookSignatureError, StripeWebhookProtocolError) as exc:
             raise HTTPException(status_code=400, detail="Invalid Stripe webhook.") from exc
-        except NotFoundError as exc:
-            # A valid event can race the persistence of the corresponding refund execution.
-            # A non-2xx response asks Stripe to retry rather than losing the outcome trigger.
+        except (NotFoundError, OutcomeVerificationUnavailableError) as exc:
+            # A valid event can race local execution persistence or a provider-current read can be
+            # temporarily unavailable. A non-2xx response preserves Stripe's retry path; neither
+            # condition consumes the event identity.
             raise HTTPException(
                 status_code=503,
-                detail="Stripe webhook target is not yet available.",
+                detail="Stripe webhook processing is temporarily unavailable.",
             ) from exc
         except IntegrityError as exc:
             raise HTTPException(
