@@ -17,8 +17,9 @@ ResolveOps is intentionally narrow. The roadmap prioritizes evidence from real r
 Post-RC development has added crash-safe action lifecycle/reconciliation, canonical case-ingestion
 idempotency, explicit refund payment-target binding, a deterministic non-Connect USD Stripe Charge
 refund transaction slice with append-only post-action outcome verification, and an authenticated
-Stripe refund-webhook boundary with atomic event replay protection. These changes are not part of
-the frozen `0.1.0rc2` validation record.
+Stripe refund-webhook boundary with atomic event replay/collision protection, retry-safe
+provider-current verification, and overlapping endpoint-secret validation. These changes are not
+part of the frozen `0.1.0rc2` validation record.
 
 ## Next milestones
 
@@ -27,9 +28,11 @@ the frozen `0.1.0rc2` validation record.
    recovery, exact refund retrieval, and lifecycle behavior;
 2. exercise the authenticated webhook ingress against actual Stripe test-mode delivery and retries,
    retaining evidence for signature validation, duplicate delivery, execution binding, provider-
-   current outcome refresh, and retry behavior when local execution state is not yet available;
-3. add deployment-level webhook secret rotation, infrastructure request-size/rate limiting, network
-   policy, identity/authorization, and tenant routing required for an enabled production ingress;
+   current outcome refresh, event ordering, and retry behavior when local/provider state is
+   temporarily unavailable;
+3. add deployment-level secret storage/distribution/retirement orchestration, infrastructure
+   request-size/rate limiting, network policy, identity/authorization, and tenant routing required
+   for an enabled production ingress;
 4. run one narrowly scoped pilot using sanitized, synthetic, or customer-owned data and measure
    successful-resolution rate, reconciliation burden, post-action verification lag, repeat-contact
    proxy, and cost per successful resolution;
