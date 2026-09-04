@@ -41,12 +41,8 @@ class StripeWebhookProcessor:
         now: Callable[[], datetime] | None = None,
     ) -> None:
         if (endpoint_secret is None) == (endpoint_secrets is None):
-            raise ValueError(
-                "configure exactly one Stripe webhook secret or endpoint-secret set"
-            )
-        configured_secrets = (
-            (endpoint_secret,) if endpoint_secret is not None else endpoint_secrets
-        )
+            raise ValueError("configure exactly one Stripe webhook secret or endpoint-secret set")
+        configured_secrets = (endpoint_secret,) if endpoint_secret is not None else endpoint_secrets
         assert configured_secrets is not None
         if not configured_secrets:
             raise ValueError("at least one Stripe webhook endpoint secret is required")
