@@ -43,9 +43,9 @@ def _processor(*, now=lambda: _NOW, tolerance=timedelta(minutes=5)) -> StripeWeb
     )
 
 
-def _digest(timestamp: int) -> str:
+def _digest(timestamp: int, *, secret: str = _SECRET) -> str:
     return hmac.new(
-        _SECRET.encode(),
+        secret.encode(),
         str(timestamp).encode() + b"." + _BODY,
         hashlib.sha256,
     ).hexdigest()
@@ -56,6 +56,27 @@ def test_multiple_v1_signatures_accept_when_any_signature_matches() -> None:
     header = f"t={timestamp},v1={'0' * 64},v1={_digest(timestamp)}"
 
     result = _processor().process(_BODY, header)
+
+    assert result == {"status": "ignored", "event_id": "evt_rotation"}
+
+
+def test_overlapping_endpoint_secrets_accept_rotation_signatures() -> None:
+    timestamp = int(_NOW.timestamp())
+    old_secret = "webhook-old-rotation-secret"
+    new_secret = "webhook-new-rotation-secret"
+    processor = StripeWebhookProcessor(
+        store=MemoryStore(),
+        verifier=NeverCalledVerifier(),
+        endpoint_secrets=(old_secret, new_secret),
+        expected_livemode=False,
+        now=lambda: _NOW,
+    )
+    header = (
+        f"t={timestamp},v1={_digest(timestamp, secret=old_secret)},"
+        f"v1={_digest(timestamp, secret=new_secret)}"
+    )
+
+    result = processor.process(_BODY, header)
 
     assert result == {"status": "ignored", "event_id": "evt_rotation"}
 
@@ -81,11 +102,33 @@ def test_malformed_or_incomplete_signature_headers_fail_closed() -> None:
 
 
 def test_webhook_processor_configuration_fails_closed() -> None:
-    with pytest.raises(ValueError, match="secret must not be empty"):
+    with pytest.raises(ValueError, match="secrets must not be empty"):
         StripeWebhookProcessor(
             store=MemoryStore(),
             verifier=NeverCalledVerifier(),
             endpoint_secret="   ",
+            expected_livemode=False,
+        )
+    with pytest.raises(ValueError, match="at least one"):
+        StripeWebhookProcessor(
+            store=MemoryStore(),
+            verifier=NeverCalledVerifier(),
+            endpoint_secrets=(),
+            expected_livemode=False,
+        )
+    with pytest.raises(ValueError, match="must be unique"):
+        StripeWebhookProcessor(
+            store=MemoryStore(),
+            verifier=NeverCalledVerifier(),
+            endpoint_secrets=(_SECRET, _SECRET),
+            expected_livemode=False,
+        )
+    with pytest.raises(ValueError, match="exactly one"):
+        StripeWebhookProcessor(
+            store=MemoryStore(),
+            verifier=NeverCalledVerifier(),
+            endpoint_secret=_SECRET,
+            endpoint_secrets=(_SECRET,),
             expected_livemode=False,
         )
     with pytest.raises(ValueError, match="tolerance must be positive"):
