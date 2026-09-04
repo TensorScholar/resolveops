@@ -30,6 +30,9 @@
 - the authenticated Stripe webhook boundary accepts only refund outcome triggers, verifies raw-body
   HMAC/timestamp/livemode, binds a refund to exactly one execution, performs a provider-current read,
   and atomically claims event IDs before outcome commit; this is not a generic webhook framework;
+- a claimed Stripe event identity is bound to its immutable mode/event-type/refund semantics;
+  sequential reuse with conflicting content fails closed, and persistent SQLite commits enforce the
+  same check atomically against concurrent delivery;
 - the webhook processor currently accepts one configured endpoint secret. It can validate multiple
   `v1` signatures for that secret in one header, but first-class overlapping old/new endpoint-secret
   rotation is not implemented;
@@ -39,8 +42,12 @@
 - a valid Stripe event can race persistence of the corresponding refund execution; the dedicated
   ingress returns `503` so Stripe may retry, but real provider retry/delivery behavior is still an
   external evidence gate;
-- provider-current lookup during webhook processing can fail or time out; ResolveOps records an
-  append-only `unknown` observation rather than trusting the signed payload's embedded status;
+- provider-current lookup during webhook processing can fail or time out; webhook-triggered reads
+  remain unclaimed and return retryable `503` rather than consuming the event or trusting its
+  embedded status. Manual outcome observation remains a distinct path that can record `unknown`;
+- `MemoryStore` is a deterministic single-process reference adapter. Persistent/concurrent webhook
+  ingestion uses `SQLiteWebhookStore`; in-memory persistence is not a multi-process coordination
+  boundary;
 - legacy pre-lifecycle SQLite databases with ambiguous execution history are rejected at startup
   rather than guessed into the new state model; current-format execution rows can be backfilled
   into the execution-claim index only after their approval/execution identity is verified;
