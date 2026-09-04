@@ -14,6 +14,7 @@ from resolveops.adapters.actions import MockActionExecutor
 from resolveops.adapters.billing import MemoryBillingReader
 from resolveops.adapters.generator import DeterministicResponseGenerator
 from resolveops.adapters.webhook_store import SQLiteWebhookStore
+from resolveops.application.outcomes import OutcomeVerificationUnavailableError
 from resolveops.application.service import ResolveOpsService
 from resolveops.application.stripe_webhooks import (
     StripeWebhookProcessor,
@@ -129,10 +130,12 @@ def test_signed_webhook_triggers_current_provider_read_not_payload_status(servic
     assert len(outcome_events) == 1
     assert outcome_events[0].payload["stripe_event_id"] == "evt_1"
     assert outcome_events[0].payload["stripe_event_type"] == "refund.updated"
+    assert outcome_events[0].payload["external_event_unique_key"] == "stripe:0:evt_1"
+    assert isinstance(outcome_events[0].payload["external_event_identity_hash"], str)
     service.verify_audit()
 
 
-def test_duplicate_event_is_committed_once(service) -> None:
+def test_duplicate_event_is_committed_once_without_repeating_provider_read(service) -> None:
     execution = _successful_execution(service)
     verifier = StaticVerifier(
         result=ActionOutcomeResult(
@@ -151,7 +154,7 @@ def test_duplicate_event_is_committed_once(service) -> None:
 
     assert first["status"] == "processed"
     assert second == {"status": "duplicate", "event_id": "evt_1"}
-    assert verifier.calls == 2
+    assert verifier.calls == 1
     assert (
         len(
             [
@@ -162,6 +165,42 @@ def test_duplicate_event_is_committed_once(service) -> None:
         )
         == 1
     )
+
+
+def test_event_id_reuse_for_different_semantics_fails_closed(service) -> None:
+    execution = _successful_execution(service)
+    verifier = StaticVerifier(
+        result=ActionOutcomeResult(
+            state=ActionOutcomeState.VERIFIED,
+            provider_reference=execution.external_reference,
+            provider_status="succeeded",
+            message="verified",
+        )
+    )
+    processor = _processor(service.store, verifier)
+    first_body = _event(
+        execution.external_reference,
+        event_id="evt_collision",
+        event_type="refund.updated",
+    )
+    conflicting_body = _event(
+        execution.external_reference,
+        event_id="evt_collision",
+        event_type="refund.failed",
+    )
+
+    assert processor.process(first_body, _signature(first_body))["status"] == "processed"
+    with pytest.raises(IntegrityError, match="reused for conflicting content"):
+        processor.process(conflicting_body, _signature(conflicting_body))
+
+    assert verifier.calls == 1
+    matching = [
+        event
+        for event in service.store.list_audit()
+        if event.payload.get("stripe_event_id") == "evt_collision"
+    ]
+    assert len(matching) == 1
+    assert matching[0].payload["stripe_event_type"] == "refund.updated"
 
 
 def test_invalid_signature_and_timestamp_replay_are_rejected(service) -> None:
@@ -212,26 +251,21 @@ def test_unsupported_signed_event_is_acknowledged_without_provider_read(service)
     assert verifier.calls == 0
 
 
-def test_provider_read_failure_is_audited_as_unknown_and_deduplicated(service) -> None:
+def test_provider_read_failure_remains_unclaimed_for_retry(service) -> None:
     execution = _successful_execution(service)
     verifier = StaticVerifier(error=TimeoutError("provider unavailable"))
     processor = _processor(service.store, verifier)
     body = _event(execution.external_reference)
+    signature = _signature(body)
 
-    first = processor.process(body, _signature(body))
-    second = processor.process(body, _signature(body))
+    with pytest.raises(OutcomeVerificationUnavailableError):
+        processor.process(body, signature)
+    with pytest.raises(OutcomeVerificationUnavailableError):
+        processor.process(body, signature)
 
-    assert first["outcome"] == "unknown"
-    assert second["status"] == "duplicate"
-    assert (
-        len(
-            [
-                event
-                for event in service.store.list_audit()
-                if event.event_type == "action.outcome_observed"
-            ]
-        )
-        == 1
+    assert verifier.calls == 2
+    assert not any(
+        event.payload.get("stripe_event_id") == "evt_1" for event in service.store.list_audit()
     )
 
 
