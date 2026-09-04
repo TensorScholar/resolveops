@@ -80,9 +80,12 @@ agent traces.
 - append-only post-action outcome observations that do not rewrite terminal command history;
 - authenticated Stripe refund-webhook processing that verifies the raw-body HMAC/timestamp and
   test/live mode before using an event as an outcome trigger;
+- explicit overlapping endpoint-secret validation for Stripe rotation windows without disabling
+  signature verification;
 - webhook refund-to-execution binding plus an exact provider-current read instead of trusting the
   webhook payload's embedded status;
-- atomic Stripe event-ID claims so concurrent/retried delivery commits at most one outcome fact;
+- atomic Stripe event-ID claims bound to immutable event identity so concurrent/retried delivery
+  commits at most one outcome fact and conflicting ID reuse fails closed;
 - a dedicated minimal Stripe webhook FastAPI ingress, separate from the broader reference support
   API;
 - hash-chained audit evidence over analyses, approvals, execution transitions, and outcome
@@ -167,9 +170,9 @@ High-impact actions are deliberately constrained:
 - analysis, approval, execution, and outcome records are bound into the hash-chained audit log.
 
 This is not a complete production security boundary. Real Stripe test-mode transaction/webhook
-evidence, deployment identity and authorization, endpoint-secret rotation, infrastructure rate
-limiting/request-size enforcement, tenant isolation, and runtime credential/action authorization
-remain production gates.
+evidence, deployment identity and authorization, secret storage/distribution/retirement
+orchestration, infrastructure rate limiting/request-size enforcement, tenant isolation, and runtime
+credential/action authorization remain production gates.
 
 See [Security model](docs/security-model.md) and [Limitations](docs/limitations.md).
 
