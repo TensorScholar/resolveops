@@ -40,8 +40,9 @@ effect.
 11. **Ambiguous provider outcome** — the provider accepts the action but the response is lost.
 12. **Stale non-terminal state** — an accepted provider operation later fails or requires action
     without ResolveOps reconciling it.
-13. **Forged or replayed webhook** — an attacker fabricates provider events, replays a valid event,
-    crosses test/live boundaries, or exploits concurrent delivery to create duplicate outcome facts.
+13. **Forged, replayed, or colliding webhook** — an attacker fabricates provider events, replays a
+    valid event, reuses an event identity for different semantics, crosses test/live boundaries, or
+    exploits concurrent delivery to create duplicate outcome facts.
 14. **Stale or out-of-order webhook payload** — a signed provider event contains an older status
     than the provider's current operation state and is mistaken for authoritative truth.
 15. **Persistence or concurrency faults** — stored models are malformed, attempts race, or audit
@@ -113,6 +114,8 @@ effect.
   history rather than rewriting a previously successful execution;
 - Stripe webhook HMAC is verified against the exact raw request body before JSON parsing, using
   the signed timestamp plus a bounded tolerance and constant-time signature comparison;
+- the webhook verifier can receive an explicit set of active endpoint secrets, allowing old/new
+  Stripe rotation overlap without disabling signature verification or weakening timestamp checks;
 - webhook `livemode` must match the deployment's configured mode, preventing test/live event
   crossing;
 - only `refund.created`, `refund.updated`, and `refund.failed` are accepted as Stripe refund
@@ -120,12 +123,18 @@ effect.
 - the signed webhook payload is not treated as outcome truth: its refund ID must bind to exactly
   one persisted execution, then ResolveOps performs an exact current provider read through the
   outcome verifier;
+- a provider-current read failure during webhook processing does not claim the event or append an
+  UNKNOWN fact; the dedicated ingress returns retryable `503` so a later delivery can retry the
+  exact read. Manual outcome observation remains a separate path that may record `unknown`;
+- Stripe event IDs are bound to an immutable event-identity digest covering mode, event ID, event
+  type, and refund ID. Sequential conflicting reuse fails closed, and `SQLiteWebhookStore` verifies
+  that identity inside the serialized claim transaction;
 - Stripe event IDs are claimed atomically with the outcome audit append. MemoryStore mirrors the
-  semantics under a lock, while `SQLiteWebhookStore` uses `BEGIN IMMEDIATE` plus a unique external
-  event claim so concurrent/retried delivery can commit at most one outcome observation;
+  normal duplicate semantics under a lock, while `SQLiteWebhookStore` uses `BEGIN IMMEDIATE` plus a
+  unique external-event claim so concurrent/retried delivery can commit at most one outcome fact;
 - the dedicated Stripe webhook FastAPI surface contains only health and webhook routes, bounds the
-  accepted signature header and body size, returns retryable `503` when a valid event races local
-  execution persistence, and does not leak internal exception text;
+  accepted signature header and body size, returns retryable `503` when processing is temporarily
+  unavailable, and does not leak internal exception text;
 - SQLite audit allocation and ingestion/review/execution transitions use serialized
   transactions;
 - malformed or internally inconsistent persisted models fail closed as integrity errors;
@@ -158,9 +167,8 @@ These controls do not make ResolveOps a production authorization or financial sy
 - A provider operation can remain non-terminal (`in_flight`, `submitted`, or `unknown`) for an
   extended period. Production integrations need an operator policy for stale state even when
   webhook/reconciliation triggers exist.
-- The webhook processor currently accepts one configured endpoint secret. Graceful overlapping
-  secret rotation across old/new endpoint secrets is not implemented at the application boundary;
-  Stripe headers with multiple `v1` signatures for the configured secret are handled correctly.
+- Application support for overlapping endpoint-secret rotation does not manage secret storage,
+  distribution, retirement timing, or deployment orchestration; those remain deployment controls.
 - Request-body limiting occurs after the ASGI server has received the body. Production ingress
   still needs infrastructure-level request-size enforcement, rate limiting/WAF controls, network
   policy, deployment identity, authorization, and tenant routing.
