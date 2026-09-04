@@ -64,11 +64,12 @@ class Store(Protocol):
 
 
 class IdempotentAuditStore(Store, Protocol):
-    """Store capability for atomically claiming one external event and appending its audit fact."""
+    """Atomically bind an external event key to one immutable identity and audit fact."""
 
     def append_audit_event_once(
         self,
         unique_key: str,
+        identity_hash: str,
         event_type: str,
         entity_id: str,
         payload: dict[str, object],
