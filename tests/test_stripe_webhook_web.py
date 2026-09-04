@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
+from resolveops.application.outcomes import OutcomeVerificationUnavailableError
 from resolveops.application.stripe_webhooks import (
     StripeWebhookProtocolError,
     StripeWebhookSignatureError,
@@ -69,6 +70,7 @@ def test_webhook_ingress_requires_signature_and_limits_body() -> None:
         (StripeWebhookSignatureError("internal-signature-sentinel"), 400),
         (StripeWebhookProtocolError("internal-protocol-sentinel"), 400),
         (NotFoundError("internal-race-sentinel"), 503),
+        (OutcomeVerificationUnavailableError("internal-provider-sentinel"), 503),
         (IntegrityError("internal-integrity-sentinel"), 409),
     ],
 )
