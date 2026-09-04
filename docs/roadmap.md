@@ -15,26 +15,31 @@ ResolveOps is intentionally narrow. The roadmap prioritizes evidence from real r
 - reproducible engineering and release validation.
 
 Post-RC development has added crash-safe action lifecycle/reconciliation, canonical case-ingestion
-idempotency, explicit refund payment-target binding, and a deterministic non-Connect USD Stripe
-Charge refund transaction slice with append-only post-action outcome verification. These changes are
-not part of the frozen `0.1.0rc2` validation record.
+idempotency, explicit refund payment-target binding, a deterministic non-Connect USD Stripe Charge
+refund transaction slice with append-only post-action outcome verification, and an authenticated
+Stripe refund-webhook boundary with atomic event replay/collision protection, retry-safe
+provider-current verification, and overlapping endpoint-secret validation. These changes are not
+part of the frozen `0.1.0rc2` validation record.
 
 ## Next milestones
 
-1. validate provider authentication, current-state enforcement, idempotency retention, timeout,
-   ambiguous-response recovery, exact refund retrieval, lifecycle reconciliation, and partial-refund
-   behavior in Stripe test mode, retaining evidence that distinguishes provider facts from
-   deterministic mocks;
-2. add an authenticated webhook ingestion boundary with signature verification, event-to-refund
-   binding, idempotent event processing, and replay handling before asynchronous provider events can
-   affect production outcome state;
-3. run one narrowly scoped pilot using sanitized, synthetic, or customer-owned data and measure
+1. obtain a controlled Stripe test-mode Charge fixture and retain provider evidence for exact Charge
+   mapping, successful partial refund, current-state rejection, ambiguous-response idempotent
+   recovery, exact refund retrieval, and lifecycle behavior;
+2. exercise the authenticated webhook ingress against actual Stripe test-mode delivery and retries,
+   retaining evidence for signature validation, duplicate delivery, execution binding, provider-
+   current outcome refresh, event ordering, and retry behavior when local/provider state is
+   temporarily unavailable;
+3. add deployment-level secret storage/distribution/retirement orchestration, infrastructure
+   request-size/rate limiting, network policy, identity/authorization, and tenant routing required
+   for an enabled production ingress;
+4. run one narrowly scoped pilot using sanitized, synthetic, or customer-owned data and measure
    successful-resolution rate, reconciliation burden, post-action verification lag, repeat-contact
    proxy, and cost per successful resolution;
-4. add the deployment identity/authorization boundary required by the connector, delegating runtime
+5. add the destructive-action deployment identity/authorization boundary, delegating runtime
    credential/action binding to AgentGuard where appropriate rather than duplicating it;
-5. address reliability and product-quality findings from the Stripe evidence run and pilot;
-6. protect `main` with required CI/review governance, rehearse the release path, freeze a new
+6. address reliability and product-quality findings from the Stripe evidence run and pilot;
+7. protect `main` with required CI/review governance, rehearse the release path, freeze a new
    release-candidate validation record, and cut a stable `0.1.0` only when the external evidence
    supports it.
 
@@ -46,6 +51,8 @@ Broader provider behavior is earned through evidence rather than assumed:
 - Stripe Connect refunds require separate application-fee/transfer-reversal semantics and evidence;
 - additional billing providers must fit the support-resolution transaction contract without
   introducing a generic connector framework;
+- additional webhook providers must fit the authenticated-event-trigger / provider-current-truth
+  model rather than widening ResolveOps into a generic event bus;
 - autonomous destructive actions remain out of scope until product evidence and runtime controls
   justify a different risk posture.
 

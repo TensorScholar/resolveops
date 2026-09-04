@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from resolveops.domain.audit import object_digest, verify_chain
 from resolveops.domain.errors import IntegrityError, InvalidTransitionError, NotFoundError
 from resolveops.domain.models import ActionExecution, ReviewState
@@ -10,7 +12,11 @@ from resolveops.domain.outcomes import (
     ActionOutcomeResult,
     ActionOutcomeState,
 )
-from resolveops.ports.interfaces import ActionOutcomeVerifier, Store
+from resolveops.ports.interfaces import ActionOutcomeVerifier, IdempotentAuditStore, Store
+
+
+class OutcomeVerificationUnavailableError(RuntimeError):
+    """A provider-current outcome read failed before an external event was claimed."""
 
 
 class ActionOutcomeService:
@@ -75,6 +81,53 @@ class ActionOutcomeService:
         if observation.provider_reference != execution.external_reference:
             raise IntegrityError("outcome observation references a different provider operation")
 
+    def _record_result(
+        self,
+        execution: ActionExecution,
+        result: ActionOutcomeResult,
+        *,
+        audit_metadata: dict[str, object] | None = None,
+        unique_event_key: str | None = None,
+        unique_event_identity_hash: str | None = None,
+    ) -> ActionOutcomeObservation | None:
+        observation = ActionOutcomeObservation(
+            execution_id=execution.id,
+            state=result.state,
+            provider_reference=result.provider_reference,
+            provider_status=result.provider_status,
+            customer_reference=result.customer_reference,
+            message=result.message,
+        )
+        self._validate_observation_identity(execution, observation)
+        payload: dict[str, object] = {
+            "execution_id": execution.id,
+            "provider_reference": observation.provider_reference,
+            "state": observation.state.value,
+            "provider_status": observation.provider_status,
+            "action_hash": object_digest(execution.action.model_dump(mode="json")),
+            "idempotency_key_hash": object_digest(execution.idempotency_key),
+            "observation": observation.model_dump(mode="json"),
+            "observation_hash": object_digest(observation.model_dump(mode="json")),
+        }
+        if audit_metadata:
+            payload.update(audit_metadata)
+        if unique_event_key is None:
+            if unique_event_identity_hash is not None:
+                raise IntegrityError("external event identity hash requires an event key")
+            self.store.append_audit_event("action.outcome_observed", execution.id, payload)
+            return observation
+        if not unique_event_identity_hash:
+            raise IntegrityError("external event claim requires an identity hash")
+        event_store = cast(IdempotentAuditStore, self.store)
+        event = event_store.append_audit_event_once(
+            unique_event_key,
+            unique_event_identity_hash,
+            "action.outcome_observed",
+            execution.id,
+            payload,
+        )
+        return observation if event is not None else None
+
     def observe(self, execution_id: str) -> ActionOutcomeObservation:
         """Append one current provider observation for an already-identified operation."""
         execution = self._verified_execution(execution_id)
@@ -92,31 +145,70 @@ class ActionOutcomeService:
                 provider_status=execution.provider_status,
                 message="Outcome verification failed; provider state requires investigation.",
             )
-
-        observation = ActionOutcomeObservation(
-            execution_id=execution.id,
-            state=result.state,
-            provider_reference=result.provider_reference,
-            provider_status=result.provider_status,
-            customer_reference=result.customer_reference,
-            message=result.message,
-        )
-        self._validate_observation_identity(execution, observation)
-        self.store.append_audit_event(
-            "action.outcome_observed",
-            execution.id,
-            {
-                "execution_id": execution.id,
-                "provider_reference": observation.provider_reference,
-                "state": observation.state.value,
-                "provider_status": observation.provider_status,
-                "action_hash": object_digest(execution.action.model_dump(mode="json")),
-                "idempotency_key_hash": object_digest(execution.idempotency_key),
-                "observation": observation.model_dump(mode="json"),
-                "observation_hash": object_digest(observation.model_dump(mode="json")),
-            },
-        )
+        observation = self._record_result(execution, result)
+        assert observation is not None
         return observation
+
+    def observe_external(
+        self,
+        execution_id: str,
+        *,
+        stripe_event_id: str,
+        stripe_event_type: str,
+        stripe_signature_timestamp: int,
+        external_event_identity_hash: str,
+        unique_event_key: str,
+    ) -> ActionOutcomeObservation | None:
+        """Use an authenticated Stripe event only as a trigger for a provider-current read.
+
+        Unlike manual observation, verifier failures do not create UNKNOWN facts here. The event
+        remains unclaimed so the ingress can return a retryable response and a later delivery can
+        perform a fresh provider read. A previously claimed event key must also carry the same
+        immutable provider-event identity; reuse for a different refund/type fails closed.
+        """
+        execution = self._verified_execution(execution_id)
+        if execution.external_reference is None:
+            raise InvalidTransitionError(
+                "execution must be reconciled to an external reference before outcome verification"
+            )
+
+        matching_claims = [
+            event
+            for event in self.store.list_audit()
+            if event.event_type == "action.outcome_observed"
+            and event.payload.get("external_event_unique_key") == unique_event_key
+        ]
+        if matching_claims:
+            if len(matching_claims) != 1:
+                raise IntegrityError("external event identity has multiple audit claims")
+            existing = matching_claims[0]
+            if (
+                existing.entity_id != execution.id
+                or existing.payload.get("external_event_identity_hash")
+                != external_event_identity_hash
+            ):
+                raise IntegrityError("external event identity was reused for conflicting content")
+            return None
+
+        try:
+            result = self.verifier.verify(execution)
+        except Exception as exc:
+            raise OutcomeVerificationUnavailableError(
+                "provider-current outcome verification is unavailable"
+            ) from exc
+        return self._record_result(
+            execution,
+            result,
+            audit_metadata={
+                "stripe_event_id": stripe_event_id,
+                "stripe_event_type": stripe_event_type,
+                "stripe_signature_timestamp": stripe_signature_timestamp,
+                "external_event_unique_key": unique_event_key,
+                "external_event_identity_hash": external_event_identity_hash,
+            },
+            unique_event_key=unique_event_key,
+            unique_event_identity_hash=external_event_identity_hash,
+        )
 
     def list_observations(self, execution_id: str) -> list[ActionOutcomeObservation]:
         """Return verified append-only observations in audit-sequence order."""

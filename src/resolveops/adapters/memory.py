@@ -35,6 +35,7 @@ class MemoryStore:
         self._execution_by_analysis: dict[str, str] = {}
         self.outcomes: list[Outcome] = []
         self.audit: list[AuditEvent] = []
+        self._audit_event_claims: dict[str, tuple[str, str, str]] = {}
         self._lock = RLock()
 
     def put_ticket(self, ticket: Ticket) -> None:
@@ -254,6 +255,37 @@ class MemoryStore:
                     payload=payload,
                 )
             )
+
+    def append_audit_event_once(
+        self,
+        unique_key: str,
+        identity_hash: str,
+        event_type: str,
+        entity_id: str,
+        payload: dict[str, object],
+    ) -> AuditEvent | None:
+        if not unique_key:
+            raise ValueError("audit event unique key must not be empty")
+        if not identity_hash:
+            raise ValueError("audit event identity hash must not be empty")
+        claim = (identity_hash, event_type, entity_id)
+        with self._lock:
+            existing = self._audit_event_claims.get(unique_key)
+            if existing is not None:
+                if existing != claim:
+                    raise IntegrityError(
+                        "external event identity was reused for conflicting content"
+                    )
+                return None
+            event = self._append_draft_locked(
+                AuditEventDraft(
+                    event_type=event_type,
+                    entity_id=entity_id,
+                    payload=payload,
+                )
+            )
+            self._audit_event_claims[unique_key] = claim
+            return event
 
     def list_audit(self) -> list[AuditEvent]:
         with self._lock:

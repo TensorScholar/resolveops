@@ -63,6 +63,19 @@ class Store(Protocol):
     def list_audit(self) -> list[AuditEvent]: ...
 
 
+class IdempotentAuditStore(Store, Protocol):
+    """Atomically bind an external event key to one immutable identity and audit fact."""
+
+    def append_audit_event_once(
+        self,
+        unique_key: str,
+        identity_hash: str,
+        event_type: str,
+        entity_id: str,
+        payload: dict[str, object],
+    ) -> AuditEvent | None: ...
+
+
 class BillingReader(Protocol):
     def get_payment(self, payment_id: str) -> PaymentSnapshot | None: ...
 
