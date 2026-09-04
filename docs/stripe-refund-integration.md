@@ -136,34 +136,48 @@ broader reference support API. The application verifies the exact raw request bo
 JSON:
 
 1. parse Stripe's `t=` timestamp and one or more `v1=` signatures from `Stripe-Signature`;
-2. compute HMAC-SHA256 over `timestamp + "." + raw_body` using the explicitly injected endpoint
-   secret and compare signatures in constant time;
+2. compute HMAC-SHA256 over `timestamp + "." + raw_body` for every explicitly active endpoint
+   secret and compare all candidate signatures in constant time;
 3. reject signatures outside the bounded timestamp tolerance;
 4. require the event's `livemode` flag to match the configured deployment mode;
 5. accept only `refund.created`, `refund.updated`, and `refund.failed` as outcome triggers;
 6. require the embedded refund ID to map to exactly one persisted ResolveOps execution;
-7. **do not trust the webhook's embedded refund status**. The signed event only triggers an exact
+7. bind the event key to an immutable digest of provider, mode, event ID, event type, and refund ID,
+   so reuse of an event identity for different semantics fails closed;
+8. **do not trust the webhook's embedded refund status**. The signed event only triggers an exact
    provider-current refund read through `ActionOutcomeVerifier`;
-8. append the resulting outcome observation to the audit chain only after atomically claiming the
-   Stripe event identity.
+9. append the resulting outcome observation to the audit chain only after atomically claiming that
+   exact external-event identity.
 
 This design intentionally separates authenticity from truth. A valid signature proves Stripe signed
 the delivered bytes; it does not prove that an older payload is still the provider's current refund
 state. Exact provider retrieval supplies the current observation.
 
-### Webhook replay and concurrency
+### Webhook replay, collision, and concurrency
 
-`MemoryStore` mirrors event claims under its process lock. Persistent webhook deployments use
-`SQLiteWebhookStore`, which adds a unique `external_event_claims` record and writes that claim plus
-the `action.outcome_observed` event inside one serialized SQLite transaction. Concurrent or retried
-delivery of the same Stripe event may repeat the read-only provider lookup, but at most one outcome
-observation is committed.
+A previously committed identical event is recognized from its audited event key and identity digest
+before another provider read is required. Reuse of the same event key for a different event type,
+refund, or deployment mode is an integrity conflict rather than a duplicate.
+
+Persistent webhook deployments use `SQLiteWebhookStore`, which adds a unique
+`external_event_claims` record and writes that claim plus the `action.outcome_observed` event inside
+one serialized SQLite transaction. Concurrent deliveries can both reach the read-only provider
+lookup, but the transaction permits at most one matching outcome commit and rejects conflicting
+identity reuse. `MemoryStore` remains a deterministic single-process reference adapter rather than a
+multi-process webhook coordination boundary.
 
 A valid refund event can arrive before the corresponding local execution has learned/persisted its
 Stripe refund ID. The dedicated HTTP ingress returns `503` for that race so Stripe can retry rather
-than silently losing the trigger. Integrity conflicts return a generic `409`; invalid signatures or
-protocol violations return a generic `400`. Internal exception details are not reflected to the
-provider.
+than silently losing the trigger.
+
+A provider-current refund read can also fail or time out. That failure deliberately does **not**
+claim the webhook event and does not append an `unknown` observation. The dedicated ingress returns
+retryable `503`, allowing a later Stripe delivery to perform a fresh provider read. Manual outcome
+observation is a separate operator/application path and may record `unknown` when the provider
+cannot be verified.
+
+Integrity conflicts return a generic `409`; invalid signatures or protocol violations return a
+generic `400`. Internal exception details are not reflected to the provider.
 
 The ingress currently bounds the accepted signature header and request body in application code.
 Production infrastructure must also enforce request-size and rate limits before the ASGI process;
@@ -171,10 +185,14 @@ the application-level body limit does not prevent the server from receiving a la
 
 ### Webhook secret rotation boundary
 
-The signature parser accepts multiple `v1` values in one Stripe signature header and succeeds when
-any value matches the configured endpoint secret. The application currently accepts **one configured
-endpoint secret**, however; overlapping rotation between distinct old/new endpoint secrets is not
-yet modeled as a first-class deployment capability.
+Stripe can keep multiple endpoint secrets active during a rotation overlap and emit a signature for
+each. `StripeWebhookProcessor` accepts either one explicit endpoint secret or an explicit tuple of
+active endpoint secrets. During overlap, any configured active secret can authenticate the delivery;
+timestamp/livemode checks remain unchanged. Configuration fails closed for empty, duplicate, or
+ambiguous secret configuration.
+
+The application does not own secret storage, distribution, retirement timing, or deployment
+orchestration. Those remain deployment responsibilities.
 
 ## What deterministic CI proves
 
@@ -195,9 +213,12 @@ The repository's HTTP and application contract tests can prove ResolveOps behavi
 - explicit execution/outcome status mappings, including unknown future provider states;
 - a later provider outcome observation changing after execution was already successful;
 - raw-body webhook signature verification and bounded replay timestamp checks;
-- multiple `v1` signature handling, test/live event separation, and unsupported-event filtering;
+- multiple `v1` signature handling and overlapping old/new endpoint-secret validation;
+- test/live event separation and unsupported-event filtering;
 - exact webhook refund-to-execution binding without trusting webhook status;
 - duplicate and concurrent Stripe event delivery committing at most one outcome observation;
+- fail-closed event-ID reuse when immutable event semantics conflict;
+- provider-read failure remaining unclaimed so HTTP can request a retry;
 - dedicated webhook HTTP failure mapping and response-detail sanitization.
 
 These tests use in-process HTTP transports and synthetic signed webhook payloads. They prove our
@@ -222,6 +243,6 @@ Charge fixture and the connector surface available to this session does not expo
 needed to create a PaymentIntent/Charge fixture. That is an external evidence/setup blocker, not a
 reason to replace provider evidence with additional mocks.
 
-Deployment identity, authorization, endpoint-secret rotation, infrastructure rate limiting,
-network policy, tenant isolation, and optional AgentGuard runtime authorization remain separate
-production gates.
+Deployment identity/authorization, secret storage and rotation orchestration, infrastructure rate
+limiting, network policy, tenant isolation, and optional AgentGuard runtime authorization remain
+separate production gates.
