@@ -88,6 +88,7 @@ class ActionOutcomeService:
         *,
         audit_metadata: dict[str, object] | None = None,
         unique_event_key: str | None = None,
+        unique_event_identity_hash: str | None = None,
     ) -> ActionOutcomeObservation | None:
         observation = ActionOutcomeObservation(
             execution_id=execution.id,
@@ -111,11 +112,16 @@ class ActionOutcomeService:
         if audit_metadata:
             payload.update(audit_metadata)
         if unique_event_key is None:
+            if unique_event_identity_hash is not None:
+                raise IntegrityError("external event identity hash requires an event key")
             self.store.append_audit_event("action.outcome_observed", execution.id, payload)
             return observation
+        if not unique_event_identity_hash:
+            raise IntegrityError("external event claim requires an identity hash")
         event_store = cast(IdempotentAuditStore, self.store)
         event = event_store.append_audit_event_once(
             unique_event_key,
+            unique_event_identity_hash,
             "action.outcome_observed",
             execution.id,
             payload,
@@ -201,6 +207,7 @@ class ActionOutcomeService:
                 "external_event_identity_hash": external_event_identity_hash,
             },
             unique_event_key=unique_event_key,
+            unique_event_identity_hash=external_event_identity_hash,
         )
 
     def list_observations(self, execution_id: str) -> list[ActionOutcomeObservation]:
