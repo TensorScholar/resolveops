@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from resolveops.application.outcomes import ActionOutcomeService
+from resolveops.domain.audit import object_digest
 from resolveops.domain.errors import IntegrityError, NotFoundError
 from resolveops.domain.models import ActionExecution
 from resolveops.ports.interfaces import ActionOutcomeVerifier, IdempotentAuditStore
@@ -134,11 +135,21 @@ class StripeWebhookProcessor:
         execution = self._execution_for_refund(refund_id)
 
         unique_event_key = f"stripe:{int(self._expected_livemode)}:{event_id}"
+        event_identity_hash = object_digest(
+            {
+                "provider": "stripe",
+                "livemode": livemode,
+                "event_id": event_id,
+                "event_type": event_type,
+                "refund_id": refund_id,
+            }
+        )
         observation = self._outcomes.observe_external(
             execution.id,
             stripe_event_id=event_id,
             stripe_event_type=event_type,
             stripe_signature_timestamp=signature_timestamp,
+            external_event_identity_hash=event_identity_hash,
             unique_event_key=unique_event_key,
         )
         if observation is None:
