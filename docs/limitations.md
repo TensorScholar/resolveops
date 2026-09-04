@@ -33,9 +33,9 @@
 - a claimed Stripe event identity is bound to its immutable mode/event-type/refund semantics;
   sequential reuse with conflicting content fails closed, and persistent SQLite commits enforce the
   same check atomically against concurrent delivery;
-- the webhook processor currently accepts one configured endpoint secret. It can validate multiple
-  `v1` signatures for that secret in one header, but first-class overlapping old/new endpoint-secret
-  rotation is not implemented;
+- the webhook processor supports an explicit set of endpoint secrets so Stripe's old/new rotation
+  overlap can be verified without disabling signature checks. Production secret distribution,
+  retirement timing, storage, and deployment orchestration remain infrastructure responsibilities;
 - application-level webhook body-size checking occurs after the ASGI server receives the body;
   production deployment still needs upstream request-size enforcement, rate limiting/WAF, network
   policy, deployment identity, authorization, and tenant routing;
