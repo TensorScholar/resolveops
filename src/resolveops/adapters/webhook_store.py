@@ -36,7 +36,11 @@ class SQLiteWebhookStore(SQLiteStore):
                     "ALTER TABLE external_event_claims ADD COLUMN identity_hash TEXT"
                 )
                 legacy_rows = connection.execute(
-                    "SELECT unique_key,audit_sequence FROM external_event_claims ORDER BY unique_key"
+                    """
+                    SELECT unique_key,audit_sequence
+                    FROM external_event_claims
+                    ORDER BY unique_key
+                    """
                 ).fetchall()
                 for unique_key, audit_sequence in legacy_rows:
                     raw_event = connection.execute(
@@ -51,7 +55,8 @@ class SQLiteWebhookStore(SQLiteStore):
                     identity_hash = event.payload.get("external_event_identity_hash")
                     if not isinstance(identity_hash, str) or not identity_hash:
                         raise IntegrityError(
-                            "legacy external event claim cannot be upgraded without identity evidence"
+                            "legacy external event claim cannot be upgraded "
+                            "without identity evidence"
                         )
                     connection.execute(
                         "UPDATE external_event_claims SET identity_hash=? WHERE unique_key=?",
